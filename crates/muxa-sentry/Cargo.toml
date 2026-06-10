@@ -1,0 +1,30 @@
+[package]
+name = "muxa-sentry"
+description = "Sentry (error tracking + performance monitoring) plugin for the muxa framework; integrates with muxa-telemetry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+
+# Bridge `tracing` events to Sentry via `sentry-tracing`. Layer is
+# attached to the shared `muxa-telemetry` subscriber's sentry slot.
+tracing-bridge = ["dep:sentry-tracing", "muxa-telemetry/sentry"]
+
+[dependencies]
+muxa-core      = { workspace = true }
+muxa-telemetry = { workspace = true }
+axum           = { workspace = true }
+sentry         = { workspace = true }
+sentry-tower   = { workspace = true }
+sentry-tracing = { workspace = true, optional = true }
+tracing        = { workspace = true }
+bon            = { workspace = true }
+serde          = { workspace = true }
+
+[lints]
+workspace = true

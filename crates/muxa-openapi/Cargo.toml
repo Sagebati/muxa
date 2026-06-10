@@ -1,0 +1,27 @@
+[package]
+name = "muxa-openapi"
+description = "OpenAPI documentation plugin (aide + Scalar) for the muxa framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+muxa-core  = { workspace = true }
+axum       = { workspace = true }
+# aide owns the OpenAPI document type and the Scalar docs UI. Enable the
+# features apps commonly need (Json/Query operation IO + the OperationIo/derive
+# macros) here, so consumers can use `muxa::aide` fully without a *direct* aide
+# dependency — the re-export carries the features (one unified aide in the graph).
+aide       = { workspace = true, features = ["axum-json", "axum-query", "macros"] }
+# Re-exported (`muxa_openapi::schemars`) so apps get the JsonSchema derive on the
+# same version aide is built against, without pinning schemars themselves.
+schemars   = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tracing    = { workspace = true }
+
+[lints]
+workspace = true

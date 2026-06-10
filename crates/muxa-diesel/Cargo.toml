@@ -1,0 +1,56 @@
+[package]
+name = "muxa-diesel"
+description = "Diesel (diesel-async + deadpool) plugin for the muxa framework — async Postgres and MySQL"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# Defaults: async Postgres via diesel-async + deadpool — matches v0.
+default = ["postgres"]
+
+# Native-async Postgres pool via `diesel-async`.
+postgres = ["diesel-async/postgres", "diesel/postgres"]
+# Native-async MySQL pool via `diesel-async`.
+mysql    = ["diesel-async/mysql",    "diesel/mysql"]
+# Note: SQLite is intentionally unsupported. `diesel-async` has no SQLite
+# backend, and muxa-diesel deliberately doesn't fall back to sync diesel on
+# a blocking pool. For async SQLite use `muxa-sqlx` with its `sqlite`
+# feature instead.
+
+# Diesel column-type adapters — opt-in passthroughs to diesel itself.
+chrono     = ["diesel/chrono"]
+uuid       = ["diesel/uuid"]
+serde_json = ["diesel/serde_json"]
+numeric    = ["diesel/numeric"]
+network    = ["diesel/network-address"]
+
+# Embedded migrations: a `MigrationsRunner` that applies pending diesel
+# migrations (in one transaction) at startup. `diesel_migrations` is sync, so it
+# runs over `diesel-async`'s `AsyncConnectionWrapper`. Implies `postgres`.
+migrations = ["postgres", "dep:diesel_migrations", "dep:tokio", "diesel-async/async-connection-wrapper"]
+
+# Per-query tracing instrumentation via the framework-agnostic `diesel-sentry`
+# crate, exposed as `DieselSentryPlugin`. Spans surface in Sentry through
+# muxa-sentry's tracing bridge (or OTEL through muxa-otel). Backend-agnostic —
+# it sets diesel's process-global default instrumentation.
+sentry = ["dep:diesel-sentry"]
+
+[dependencies]
+muxa-core    = { workspace = true }
+dupe         = { workspace = true }
+diesel       = { workspace = true }
+diesel-async = { workspace = true }
+diesel_migrations = { workspace = true, optional = true }
+diesel-sentry = { workspace = true, optional = true }
+# `spawn_blocking` for running the (sync) migration harness off the executor.
+tokio        = { workspace = true, optional = true }
+bon          = { workspace = true }
+serde        = { workspace = true }
+tracing      = { workspace = true }
+
+[lints]
+workspace = true

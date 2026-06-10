@@ -1,0 +1,29 @@
+[package]
+name = "muxa-core"
+description = "Core plugin trait, HList state, capability traits and application builder for the muxa framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+muxa-telemetry = { workspace = true }
+dupe        = { workspace = true }
+tokio       = { workspace = true }
+tokio-util  = { workspace = true }
+futures     = { workspace = true }
+axum        = { workspace = true }
+tower       = { workspace = true }
+http        = { workspace = true }
+figment     = { workspace = true }
+serde       = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true

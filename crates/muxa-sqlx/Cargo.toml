@@ -1,0 +1,62 @@
+[package]
+name = "muxa-sqlx"
+description = "SQLx plugin for the muxa framework (Postgres + SQLite)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# Defaults: Postgres driver + rustls TLS — matches the original v0
+# behaviour and the most common production setup. Disable defaults and
+# pick `sqlite` (or `mysql`) for a different driver.
+default = ["postgres", "tls-rustls"]
+
+# Database drivers. Cargo unifies these — enabling more than one compiles
+# multiple `sqlx::Database` impls into the binary, which is fine.
+postgres         = ["sqlx/postgres"]
+sqlite           = ["sqlx/sqlite"]
+mysql            = ["sqlx/mysql"]
+
+# TLS implementation (only meaningful for network drivers like postgres /
+# mysql). Pick one — they're mutually exclusive at the sqlx level.
+tls-rustls       = ["sqlx/tls-rustls"]
+tls-native       = ["sqlx/tls-native-tls"]
+
+# Compile-time query macros (`sqlx::query!`).
+macros           = ["sqlx/macros"]
+
+# Column-type adapters — opt-in passthroughs.
+chrono           = ["sqlx/chrono"]
+time             = ["sqlx/time"]
+uuid             = ["sqlx/uuid"]
+json             = ["sqlx/json"]
+bigdecimal       = ["sqlx/bigdecimal"]
+rust_decimal     = ["sqlx/rust_decimal"]
+ipnet            = ["sqlx/ipnet"]
+mac_address      = ["sqlx/mac_address"]
+bit-vec          = ["sqlx/bit-vec"]
+
+# Pool migration helpers (sqlx::migrate!).
+migrate          = ["sqlx/migrate"]
+
+# Emit `tracing` events per query (query text, duration, rows affected).
+# These flow through the shared `muxa-telemetry` subscriber to whichever
+# backends are registered (fmt, OTel, Sentry).
+# Note: sqlx 0.8 emits tracing events when its `tracing` feature is on,
+# which is the default. We expose this flag for completeness; disabling
+# it requires also clearing `sqlx`'s own defaults at the workspace level.
+db-traces        = []
+
+[dependencies]
+muxa-core   = { workspace = true }
+dupe        = { workspace = true }
+sqlx        = { workspace = true }
+bon         = { workspace = true }
+serde       = { workspace = true }
+tracing     = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,61 @@
+[package]
+name = "muxa-otel"
+description = "OpenTelemetry plugin for the muxa framework — traces, metrics, logs, and a tower-http TraceLayer; integrates with muxa-telemetry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# Defaults light up the same surface the v0 implementation already wired:
+# a tower-http TraceLayer on the router. The base tracing-subscriber +
+# EnvFilter is owned by `muxa-telemetry` and always present.
+default = ["http-layer"]
+
+# Add `tower_http::trace::TraceLayer` to the router.
+http-layer  = ["dep:tower-http"]
+
+# OpenTelemetry providers (pulled in only when activated — these are the
+# heavy deps). Each signal enables the matching sub-features on the SDK.
+traces      = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry/trace", "opentelemetry_sdk/trace"]
+metrics     = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry/metrics", "opentelemetry_sdk/metrics"]
+# `logs` also pulls the tracing→OTel-logs appender bridge (the only log source
+# here is the `tracing` macros).
+logs        = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry/logs", "opentelemetry_sdk/logs", "dep:opentelemetry-appender-tracing"]
+
+# OTLP exporters. Pick one transport: tonic/grpc or http.
+otlp-tonic  = ["traces",
+               "dep:opentelemetry-otlp",
+               "opentelemetry-otlp/grpc-tonic",
+               "opentelemetry-otlp/trace",
+               "opentelemetry-otlp/metrics",
+               "opentelemetry-otlp/logs"]
+otlp-http   = ["traces",
+               "dep:opentelemetry-otlp",
+               "opentelemetry-otlp/http-proto",
+               "opentelemetry-otlp/reqwest-client",
+               "opentelemetry-otlp/trace",
+               "opentelemetry-otlp/metrics",
+               "opentelemetry-otlp/logs"]
+
+# Bridge the `tracing` crate to OpenTelemetry (sends `tracing::Span`s as
+# OTel spans via `muxa-telemetry`'s subscriber registry).
+tracing-bridge = ["traces", "dep:tracing-opentelemetry"]
+
+[dependencies]
+muxa-core             = { workspace = true }
+tracing               = { workspace = true }
+serde                 = { workspace = true }
+bon                   = { workspace = true }
+
+tower-http            = { workspace = true, optional = true }
+opentelemetry         = { workspace = true, optional = true }
+opentelemetry_sdk     = { workspace = true, optional = true }
+opentelemetry-otlp    = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry-appender-tracing = { workspace = true, optional = true }
+
+[lints]
+workspace = true

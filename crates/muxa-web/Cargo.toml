@@ -1,0 +1,52 @@
+[package]
+name = "muxa-web"
+description = "Web (axum) plugin for the muxa framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# Defaults install ctrl-c handling for graceful shutdown. Turn off if you
+# manage your own signal handling and just want the bind/serve loop.
+default = ["graceful-shutdown"]
+
+# `tokio::signal::ctrl_c` bridge into the shutdown token.
+graceful-shutdown = ["tokio/signal"]
+
+# Aide-aware web plugin (`ApiPlugin`): finishes an `aide::axum::ApiRouter` into
+# routes + an OpenAPI document and serves the spec/docs via muxa-openapi.
+openapi = ["dep:aide", "dep:muxa-openapi"]
+
+# Per-IP rate limiting layer (`ratelimit` module). tower_governor's `axum`
+# feature enables peer-IP extraction from `ConnectInfo`; `governor` supplies the
+# middleware type the layer is named with. (tokio rt+time come from the base dep.)
+ratelimit = ["dep:tower_governor", "tower_governor/axum", "dep:governor"]
+
+[dependencies]
+muxa-core   = { workspace = true }
+# aide finish + OpenAPI doc; only when the `openapi` feature is on.
+aide         = { workspace = true, optional = true }
+muxa-openapi = { workspace = true, optional = true }
+# Pull `tokio` without `signal` by default; the feature adds it back.
+tokio       = { workspace = true }
+tokio-util  = { workspace = true }
+futures     = { workspace = true }
+axum        = { workspace = true }
+tower       = { workspace = true }
+# Per-IP rate limiting; only when the `ratelimit` feature is on. `governor` is
+# the underlying GCRA limiter (needed to name the layer's middleware type).
+tower_governor = { workspace = true, optional = true }
+governor    = { workspace = true, optional = true }
+http        = { workspace = true }
+bon         = { workspace = true }
+serde       = { workspace = true }
+tracing     = { workspace = true }
+# For the launch banner — extract the merged figment and pretty-print it.
+figment     = { workspace = true }
+toml        = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,162 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/muxa-core",
+    "crates/muxa-telemetry",
+    "crates/muxa-web",
+    "crates/muxa-sqlx",
+    "crates/muxa-diesel",
+    "crates/muxa-pgmq",
+    "crates/muxa-otel",
+    "crates/muxa-sentry",
+    "crates/muxa-openapi",
+    "crates/diesel-sentry",
+    "crates/muxa",
+    "examples/hello",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["Samuel Batissou <samublaise@gmail.com>"]
+repository = "https://github.com/samublaise/muxa"
+readme = "README.md"
+
+# Lints shared across all workspace crates (each opts in with `[lints]
+# workspace = true`). Kept IDENTICAL to the katago-ws app's `[lints.clippy]` so
+# the framework and its consumer enforce the same bar. (Mirror changes in both,
+# plus clippy.toml's `allow-unwrap-in-tests`.)
+[workspace.lints.clippy]
+# Panic safety (tests exempted via clippy.toml's allow-unwrap-in-tests).
+unwrap_used = "warn"
+# No debug/placeholder leftovers; use `tracing`, not stdout/stderr.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+mem_forget = "warn"
+# Small correctness wins.
+lossy_float_literal = "warn"
+fn_to_numeric_cast_any = "warn"
+map_err_ignore = "warn"
+# Clarity / consistency.
+clone_on_ref_ptr = "warn"
+str_to_string = "warn"
+min_ident_chars = "warn"
+unused_trait_names = "warn"
+allow_attributes_without_reason = "warn"
+redundant_pub_crate = "warn"
+
+[workspace.dependencies]
+# Internal crates. `default-features = false` so the muxa facade controls
+# which features cascade in; consumer crates of these via workspace.dependencies
+# still need to enable features explicitly.
+muxa           = { path = "crates/muxa",           version = "0.1.0", default-features = false }
+muxa-core      = { path = "crates/muxa-core",      version = "0.1.0" }
+muxa-telemetry = { path = "crates/muxa-telemetry", version = "0.1.0" }
+muxa-web       = { path = "crates/muxa-web",       version = "0.1.0", default-features = false }
+muxa-sqlx   = { path = "crates/muxa-sqlx",   version = "0.1.0", default-features = false }
+muxa-diesel = { path = "crates/muxa-diesel", version = "0.1.0", default-features = false }
+muxa-pgmq   = { path = "crates/muxa-pgmq",   version = "0.1.0", default-features = false }
+muxa-otel   = { path = "crates/muxa-otel",   version = "0.1.0", default-features = false }
+muxa-sentry = { path = "crates/muxa-sentry", version = "0.1.0", default-features = false }
+muxa-openapi = { path = "crates/muxa-openapi", version = "0.1.0", default-features = false }
+# Framework-agnostic (no muxa dep); the diesel plugin's `sentry` feature wraps it.
+diesel-sentry = { path = "crates/diesel-sentry", version = "0.1.0" }
+
+# Async runtime
+# Bare minimum tokio features at the workspace level. `signal` is activated
+# only when `muxa-web/graceful-shutdown` is enabled; `macros` /
+# `rt-multi-thread` are enabled by the user's binary, not by our libs.
+tokio       = { version = "1", features = ["rt", "sync", "time"] }
+tokio-util  = { version = "0.7", features = ["rt"] }
+futures     = "0.3"
+pin-project-lite = "0.2"
+
+# HTTP & middleware
+axum        = "0.8"
+tower       = { version = "0.5", features = ["util"] }
+tower-http  = { version = "0.6", features = ["trace"] }
+http        = "1"
+# Per-IP rate limiting (GCRA) as a tower layer, used by muxa-web's `ratelimit`
+# feature. `governor` is the underlying limiter — pinned to the version
+# tower_governor builds against so its middleware types unify.
+tower_governor = "0.8"
+governor = "0.10"
+
+# Database
+# Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),
+# `tls-*`, and column-type adapters are opted in via `muxa-sqlx`'s own Cargo
+# features (and unioned across the dep graph by cargo).
+sqlx         = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+diesel       = { version = "2", default-features = false }
+# diesel-async pinned to 0.9 to match the pgmq fork's diesel-async dep. Bump
+# in lockstep when the fork upgrades. Native-async only — diesel-async
+# supports Postgres and MySQL but not SQLite, so muxa-diesel is
+# Postgres/MySQL only.
+diesel-async = { version = "0.9", default-features = false, features = ["deadpool"] }
+# Sync migration harness; muxa-diesel runs it over diesel-async's
+# AsyncConnectionWrapper. Tracks diesel's 2.x line.
+diesel_migrations = { version = "2", default-features = false }
+
+# Postgres message queue — Sagebati fork that abstracts over driver pools via
+# Cargo features (sqlx, tokio-postgres, diesel-async, diesel-sync) instead of
+# hard-coding sqlx like upstream.
+# Pinned to a known-good commit: branch `main` has drifted to require
+# diesel-async ^0.5 (conflicts with muxa-diesel's ^0.9). This rev (0.34.0-alpha)
+# tracks diesel-async 0.9 — the same commit goban-analyser/katago-ws uses — so
+# the muxa workspace builds & lints standalone. Bump in lockstep with the fork.
+pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "e243a26a60a0c3a43eefca2051156556715e875e", default-features = false }
+
+# Config
+figment     = { version = "0.10", features = ["toml", "env"] }
+toml        = "0.8"
+
+# OpenAPI — aide (alpha line: axum 0.8 + schemars 1.0). Exact-pinned so the
+# `OpenApi` type unifies across muxa-openapi and downstream binaries. muxa-openapi
+# itself only needs the document type; the consuming binary adds `axum-json`/
+# `macros` on its own aide dep and cargo unions the features.
+aide        = { version = "=0.16.0-alpha.4", features = ["axum"] }
+# Re-exported by muxa-openapi so apps can derive `JsonSchema` via `muxa::schemars`
+# on the same version aide uses (the schemars derive supports `#[schemars(crate=…)]`).
+schemars    = { version = "1", features = ["derive"] }
+
+# Builders
+bon         = "3"
+
+# `Dupe` — Meta's marker trait for types whose Clone is cheap.
+dupe        = "0.9"
+
+# Serde
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# Errors
+thiserror   = "2"
+
+# Tracing & observability
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
+opentelemetry       = "0.32"
+opentelemetry_sdk   = { version = "0.32", features = ["rt-tokio"] }
+# OTLP exporter transports are split into separate features in 0.32; the
+# `muxa-otel/otlp-tonic` and `muxa-otel/otlp-http` features pick one.
+opentelemetry-otlp  = { version = "0.32", default-features = false }
+tracing-opentelemetry = "0.33"
+# Bridges `tracing` events → OpenTelemetry logs (the logs analogue of the
+# tracing-opentelemetry span bridge). Tracks the opentelemetry 0.32 line.
+opentelemetry-appender-tracing = { version = "0.32", default-features = false }
+
+# Auth: deferred. The project is sessionless for now; muxa-auth /
+# axum-login / tower-sessions will return when there's a concrete need
+# (e.g. once we land token-based auth that doesn't require server-side
+# session storage).
+
+# Sentry (error tracking + performance monitoring). rustls TLS for portability.
+sentry         = { version = "0.48", default-features = false, features = ["backtrace", "contexts", "panic", "release-health", "debug-images", "reqwest", "rustls"] }
+sentry-tower   = { version = "0.48", features = ["http"] }
+sentry-tracing = { version = "0.48", default-features = false }

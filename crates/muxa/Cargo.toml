@@ -1,0 +1,100 @@
+[package]
+name = "muxa"
+description = "Batteries-included web framework on axum (facade crate)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["web", "otel"]
+
+# ---------------------------------------------------------------------------
+# Integration crates — gate each one behind a top-level feature, and forward
+# the integration's own features through. `?/feature` syntax means
+# "activate feature on the dep ONLY if the dep is in the graph" — so a user
+# enabling `sqlx-chrono` without also enabling `sqlx` is a no-op rather than
+# a build error.
+# ---------------------------------------------------------------------------
+
+# Web (axum serve loop + graceful shutdown).
+web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
+web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
+# Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
+ratelimit           = ["dep:muxa-web", "muxa-web/ratelimit"]
+
+# SQLx Postgres pool (the default driver — produces `SqlxPool`, `SqlxPlugin`).
+sqlx                = ["dep:muxa-sqlx", "muxa-sqlx/postgres", "muxa-sqlx/tls-rustls", "muxa-pgmq?/sqlx"]
+sqlx-tls-native     = ["dep:muxa-sqlx", "muxa-sqlx/postgres", "muxa-sqlx/tls-native", "muxa-pgmq?/sqlx"]
+# SQLx SQLite pool (produces `SqlitePool`, `SqlitePlugin`). No pgmq backend —
+# pgmq is Postgres-only.
+sqlite              = ["dep:muxa-sqlx", "muxa-sqlx/sqlite"]
+sqlx-macros         = ["muxa-sqlx?/macros"]
+sqlx-chrono         = ["muxa-sqlx?/chrono"]
+sqlx-time           = ["muxa-sqlx?/time"]
+sqlx-uuid           = ["muxa-sqlx?/uuid"]
+sqlx-json           = ["muxa-sqlx?/json"]
+sqlx-bigdecimal     = ["muxa-sqlx?/bigdecimal"]
+sqlx-rust_decimal   = ["muxa-sqlx?/rust_decimal"]
+sqlx-migrate        = ["muxa-sqlx?/migrate"]
+
+# Diesel-async Postgres pool (async-native).
+diesel              = ["dep:muxa-diesel", "muxa-diesel/postgres", "muxa-pgmq?/diesel-async"]
+# Embedded migrations mode for the diesel plugin (MigrationsRunner).
+diesel-migrations   = ["diesel", "muxa-diesel?/migrations"]
+# Per-query diesel tracing → Sentry/OTEL (DieselSentryPlugin).
+diesel-sentry       = ["diesel", "muxa-diesel?/sentry"]
+# Diesel MySQL pool (async-native via diesel-async).
+diesel-mysql        = ["dep:muxa-diesel", "muxa-diesel/mysql"]
+diesel-chrono       = ["muxa-diesel?/chrono"]
+diesel-uuid         = ["muxa-diesel?/uuid"]
+diesel-json         = ["muxa-diesel?/serde_json"]
+diesel-numeric      = ["muxa-diesel?/numeric"]
+diesel-network      = ["muxa-diesel?/network"]
+
+# PGMQ.
+pgmq                = ["dep:muxa-pgmq"]
+pgmq-tracing-spans  = ["muxa-pgmq?/tracing-spans"]
+
+# OpenTelemetry / observability.
+otel                = ["dep:muxa-otel"]
+otel-traces         = ["muxa-otel?/traces"]
+otel-metrics        = ["muxa-otel?/metrics"]
+otel-logs           = ["muxa-otel?/logs"]
+otel-otlp-tonic     = ["muxa-otel?/otlp-tonic"]
+otel-otlp-http      = ["muxa-otel?/otlp-http"]
+otel-tracing-bridge = ["muxa-otel?/tracing-bridge"]
+
+# Sentry (error tracking + perf monitoring). Pulls in `sentry-tracing` as
+# part of the bundle so events flow into Sentry as breadcrumbs.
+sentry                = ["dep:muxa-sentry", "muxa-sentry?/tracing-bridge"]
+# Explicit (rare) opt-out variant.
+sentry-no-tracing     = ["dep:muxa-sentry"]
+
+# OpenAPI docs (aide + Scalar UI). Also lights up muxa-web's aide-aware
+# `ApiPlugin` when `web` is enabled.
+openapi               = ["dep:muxa-openapi", "muxa-web?/openapi"]
+
+# Auth: removed for now. The project is sessionless until a non-session
+# auth story lands.
+
+# Convenience bundle — everything in default-typical configuration.
+full = [
+    "web", "sqlx", "sqlx-chrono", "sqlx-uuid", "sqlx-json",
+    "pgmq", "otel", "sentry", "openapi",
+]
+
+[dependencies]
+muxa-core   = { workspace = true }
+muxa-web    = { workspace = true, optional = true }
+muxa-sqlx   = { workspace = true, optional = true }
+muxa-diesel = { workspace = true, optional = true }
+muxa-pgmq   = { workspace = true, optional = true }
+muxa-otel   = { workspace = true, optional = true }
+muxa-sentry = { workspace = true, optional = true }
+muxa-openapi = { workspace = true, optional = true }
+
+[lints]
+workspace = true

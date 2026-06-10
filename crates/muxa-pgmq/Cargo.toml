@@ -1,0 +1,45 @@
+[package]
+name = "muxa-pgmq"
+description = "PGMQ (Postgres-backed message queue) plugin for the muxa framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# No driver by default — the `muxa` facade activates the matching feature
+# here when its own `sqlx`/`diesel` feature is enabled.
+default = []
+
+# Enable the sqlx backend impl (`Plugin` for `PgmqPlugin<SqlxBackend, _>`).
+# Pgmq is Postgres-only, so we force `muxa-sqlx/postgres` + `sqlx/postgres`
+# here regardless of the consumer's wider feature set.
+sqlx          = ["pgmq/sqlx", "dep:muxa-sqlx", "muxa-sqlx/postgres", "dep:sqlx", "sqlx/postgres"]
+# Enable the diesel-async backend impl (`Plugin` for `PgmqPlugin<DieselBackend, _>`).
+# Pgmq is Postgres-only, so we force `muxa-diesel/postgres` (which itself
+# pulls in `diesel-async/postgres`) regardless of the consumer's setup.
+diesel-async  = ["pgmq/diesel-async", "dep:muxa-diesel", "muxa-diesel/postgres", "dep:diesel-async", "diesel-async/postgres"]
+
+# Forward pgmq fork's `tracing` feature — emits spans around queue ops.
+tracing-spans = ["pgmq/tracing"]
+
+[dependencies]
+muxa-core    = { workspace = true }
+muxa-sqlx    = { workspace = true, optional = true }
+muxa-diesel  = { workspace = true, optional = true }
+sqlx         = { workspace = true, optional = true }
+diesel-async = { workspace = true, optional = true }
+pgmq         = { workspace = true, features = ["install-sql-embedded"] }
+bon          = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+muxa-sqlx   = { workspace = true }
+muxa-diesel = { workspace = true }
+
+[lints]
+workspace = true

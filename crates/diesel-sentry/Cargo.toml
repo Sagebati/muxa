@@ -1,0 +1,18 @@
+[package]
+name = "diesel-sentry"
+description = "Diesel Instrumentation that emits per-query/connection/transaction tracing spans tagged for Sentry (and OpenTelemetry)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Generic / framework-agnostic: depends only on diesel + tracing. Works with any
+# diesel or diesel-async setup, and any `tracing`→Sentry/OTEL layer.
+[dependencies]
+diesel  = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
