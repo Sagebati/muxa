@@ -25,6 +25,7 @@ sentry-tracing = { workspace = true, optional = true }
 tracing        = { workspace = true }
 bon            = { workspace = true }
 serde          = { workspace = true }
+secrecy        = { workspace = true }
 
 [lints]
 workspace = true

@@ -8,6 +8,7 @@ use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
 use dupe::Dupe;
 use muxa_core::{BuildCtx, Error, PgmqBackend, PgmqPool, Plugin, Result, State};
+use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
 /// Newtype wrapping a deadpool-managed `AsyncPgConnection` pool.
@@ -50,8 +51,10 @@ fn default_max_connections() -> u32 {
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct DieselConfig {
-    /// Postgres connection URL. **Required** — there is no default.
-    pub url: String,
+    /// Postgres connection URL. **Required** — there is no default. Held as a
+    /// [`SecretString`] so it's redacted in `Debug`/logs and never copied around
+    /// in the clear; the value is exposed only when building the pool.
+    pub url: SecretString,
     /// Maximum number of pool connections.
     #[builder(default = default_max_connections())]
     pub max_connections: u32,
@@ -60,7 +63,7 @@ pub struct DieselConfig {
 impl Default for DieselConfig {
     fn default() -> Self {
         Self {
-            url: String::new(),
+            url: SecretString::from(String::new()),
             max_connections: default_max_connections(),
         }
     }
@@ -116,7 +119,7 @@ impl<S: State> Plugin<S> for DieselPlugin {
     const CONFIG_PREFIX: &'static str = "diesel";
 
     async fn build(self, cfg: DieselConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<DieselPool> {
-        if cfg.url.is_empty() {
+        if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
                 "muxa-diesel: `diesel.url` is required (set in config or MUXA_DIESEL__URL)",
             ));
@@ -135,7 +138,7 @@ impl<S: State> Plugin<S> for DieselPlugin {
         // any plugin or handler that touches the database after this point.
         #[cfg(feature = "migrations")]
         if let Some(runner) = self.migrations {
-            let applied = runner.run(&cfg.url).await?;
+            let applied = runner.run(cfg.url.expose_secret()).await?;
             tracing::info!(applied, "muxa-diesel[pg]: applied pending migrations");
         }
 
@@ -144,7 +147,7 @@ impl<S: State> Plugin<S> for DieselPlugin {
             "muxa-diesel[pg]: connecting"
         );
 
-        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url);
+        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
         let pool = Pool::builder(manager)
             .max_size(cfg.max_connections as usize)
             .build()
@@ -152,5 +155,25 @@ impl<S: State> Plugin<S> for DieselPlugin {
 
         tracing::info!("muxa-diesel[pg]: pool built");
         Ok(DieselPool(pool))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of wrapping `url` in `SecretString`: a `Debug` dump of the
+    /// config (e.g. an accidental `tracing::debug!(?cfg)`) must never reveal it.
+    #[test]
+    fn url_is_redacted_in_debug() {
+        let cfg = DieselConfig {
+            url: SecretString::from("postgres://user:hunter2@db:5432/app".to_owned()),
+            max_connections: 7,
+        };
+        let rendered = format!("{cfg:?}");
+        assert!(!rendered.contains("hunter2"), "secret leaked: {rendered}");
+        assert!(!rendered.contains("postgres://"), "secret leaked: {rendered}");
+        // Non-secret fields still render — only the secret is hidden.
+        assert!(rendered.contains("max_connections"));
     }
 }

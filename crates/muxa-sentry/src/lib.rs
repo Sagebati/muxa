@@ -38,6 +38,7 @@ use std::borrow::Cow;
 
 use bon::Builder;
 use muxa_core::{BuildCtx, Plugin, Result, State};
+use secrecy::{ExposeSecret as _, SecretString};
 use sentry::ClientInitGuard;
 use sentry_tower::{NewSentryLayer, SentryHttpLayer};
 use serde::Deserialize;
@@ -47,8 +48,9 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct SentryConfig {
     /// Sentry DSN. If `None`/empty, the SDK initializes a no-op client and
-    /// no events are sent — useful for development.
-    pub dsn: Option<String>,
+    /// no events are sent — useful for development. A [`SecretString`] so it's
+    /// redacted in `Debug`/logs; exposed only to parse it at init.
+    pub dsn: Option<SecretString>,
     /// Logical environment (e.g. `"development"`, `"production"`).
     pub environment: Option<String>,
     /// Release identifier (e.g. `"my-app@1.2.3"`).
@@ -93,12 +95,14 @@ impl<S: State> Plugin<S> for SentryPlugin {
         _state: &S,
         ctx: &mut BuildCtx,
     ) -> Result<SentryHandle> {
-        // Treat empty string as None.
-        let dsn = cfg
+        // Treat empty string as None. The DSN is a secret — expose it only to
+        // parse it here, never to logs.
+        let raw_dsn = cfg
             .dsn
-            .as_deref()
-            .filter(|raw| !raw.is_empty())
-            .and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
+            .as_ref()
+            .map(|secret| secret.expose_secret())
+            .filter(|raw| !raw.is_empty());
+        let dsn = raw_dsn.and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
 
         let options = sentry::ClientOptions {
             dsn,
@@ -137,7 +141,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
         #[cfg(feature = "tracing-bridge")]
         ctx.telemetry.set_sentry_layer(sentry_tracing::layer());
 
-        if cfg.dsn.as_deref().is_some_and(|raw| !raw.is_empty()) {
+        if raw_dsn.is_some() {
             tracing::info!(
                 env = cfg.environment.as_deref().unwrap_or("-"),
                 release = cfg.release.as_deref().unwrap_or("-"),

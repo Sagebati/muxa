@@ -135,6 +135,9 @@ dupe        = "0.9"
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
 
+# Secrets: wrap sensitive config (DB url, Sentry DSN) so Debug/logs redact them.
+secrecy     = { version = "0.10", features = ["serde"] }
+
 # Errors
 thiserror   = "2"
 

@@ -50,6 +50,7 @@ diesel-sentry = { workspace = true, optional = true }
 tokio        = { workspace = true, optional = true }
 bon          = { workspace = true }
 serde        = { workspace = true }
+secrecy      = { workspace = true }
 tracing      = { workspace = true }
 
 [lints]
