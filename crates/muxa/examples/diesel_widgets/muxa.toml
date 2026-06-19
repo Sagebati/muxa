@@ -20,5 +20,5 @@ metric_interval_secs = 5
 [diesel]
 # Matches the credentials in docker-compose.yml. Override with
 # MUXA_DIESEL__URL to point at a different database.
-url = "postgres://muxa:muxa@localhost:5432/muxa"
+url = "postgres://muxa:muxa@localhost:5433/muxa"
 max_connections = 5
