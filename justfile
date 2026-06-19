@@ -45,11 +45,13 @@ hello *ARGS:
 web-only *ARGS:
     cargo run -p muxa --example web_only -- {{ARGS}}
 
-# Diesel JSON-API example: start Postgres via docker compose, then run it.
+# Diesel JSON-API example: start Postgres + otel-lgtm via docker compose, then
+# run it exporting OTLP traces/metrics/logs. Grafana UI: http://localhost:3001
 diesel-compose := "crates/muxa/examples/diesel_widgets/docker-compose.yml"
+diesel-features := "diesel-migrations otel-otlp-tonic otel-metrics otel-logs otel-tracing-bridge"
 diesel-example *ARGS:
     docker compose -f {{diesel-compose}} up -d --wait
-    cargo run -p muxa --example diesel_widgets --features diesel-migrations -- {{ARGS}}
+    cargo run -p muxa --example diesel_widgets --features "{{diesel-features}}" -- {{ARGS}}
 
 # Tear down the diesel example's Postgres (and its volume).
 diesel-example-down:

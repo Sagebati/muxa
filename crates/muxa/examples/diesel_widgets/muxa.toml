@@ -10,6 +10,12 @@ port = 3000
 
 [otel]
 service_name = "diesel-widgets"
+# OTLP/gRPC endpoint of the otel-lgtm collector in docker-compose.yml.
+# Export only happens when an OTLP transport feature is compiled in (see the
+# `just diesel-example` recipe); otherwise this is ignored. Override with
+# MUXA_OTEL__ENDPOINT.
+endpoint = "http://localhost:4317"
+metric_interval_secs = 5
 
 [diesel]
 # Matches the credentials in docker-compose.yml. Override with

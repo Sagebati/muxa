@@ -9,11 +9,12 @@
 //! # Run it
 //!
 //! ```text
-//! # 1. Start Postgres (waits until healthy):
+//! # 1. Start Postgres + the otel-lgtm collector (waits until healthy):
 //! docker compose -f crates/muxa/examples/diesel_widgets/docker-compose.yml up -d --wait
 //!
-//! # 2. Run the example (applies migrations at startup):
-//! cargo run -p muxa --example diesel_widgets --features diesel-migrations
+//! # 2. Run the example (applies migrations + exports OTLP at startup):
+//! cargo run -p muxa --example diesel_widgets \
+//!     --features "diesel-migrations otel-otlp-tonic otel-metrics otel-logs otel-tracing-bridge"
 //!
 //! # 3. Hit the JSON endpoints:
 //! curl -s localhost:3000/widgets | jq
@@ -21,17 +22,25 @@
 //!     -H 'content-type: application/json' \
 //!     -d '{"name":"widget","quantity":3}' | jq
 //!
-//! # 4. Tear down:
+//! # 4. See traces/metrics/logs in Grafana (service `diesel-widgets`):
+//! #    http://localhost:3001  (Explore → Tempo / Prometheus / Loki)
+//!
+//! # 5. Tear down:
 //! docker compose -f crates/muxa/examples/diesel_widgets/docker-compose.yml down -v
 //! ```
 //!
-//! Or use the justfile shortcut: `just diesel-example`.
+//! Or use the justfile shortcut: `just diesel-example`. Without the OTLP
+//! features the example still runs — `muxa-otel` just skips export.
+
+use std::sync::LazyLock;
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use diesel::prelude::*;
+use opentelemetry::metrics::Counter;
+use opentelemetry::{KeyValue, global};
 // Named (not `as _`): the binding shadows the sync `diesel::RunQueryDsl` that
 // `diesel::prelude::*` also pulls in, so `.load()` / `.get_result()` resolve
 // unambiguously to the async executor instead of erroring on E0034.
@@ -78,10 +87,25 @@ struct NewWidget {
 /// The path is relative to the crate root (`crates/muxa`).
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("examples/diesel_widgets/migrations");
 
+/// An OTel metric (exported to the collector): one count per handled request,
+/// tagged by operation. Resolves against the global meter provider that
+/// `OtelPlugin` installs at startup; first use happens per-request, well after.
+static REQUESTS: LazyLock<Counter<u64>> = LazyLock::new(|| {
+    global::meter("diesel-widgets")
+        .u64_counter("widgets.requests")
+        .with_description("Number of widget API requests handled.")
+        .build()
+});
+
 /// `GET /widgets` — list every widget, oldest first.
+///
+/// `#[instrument]` opens a `tracing` span; with the `tracing-bridge` feature it
+/// is exported to the collector as a trace.
+#[tracing::instrument(name = "list_widgets", skip_all)]
 async fn list_widgets(
     State(pool): State<DieselPool>,
 ) -> Result<Json<Vec<Widget>>, (StatusCode, String)> {
+    REQUESTS.add(1, &[KeyValue::new("op", "list")]);
     let mut conn = pool.get().await.map_err(internal)?;
     let rows = schema::widgets::table
         .select(Widget::as_select())
@@ -89,14 +113,17 @@ async fn list_widgets(
         .load(&mut conn)
         .await
         .map_err(internal)?;
+    tracing::info!(count = rows.len(), "listed widgets");
     Ok(Json(rows))
 }
 
 /// `POST /widgets` — insert a widget and return the created row.
+#[tracing::instrument(name = "create_widget", skip_all, fields(widget.name = %new.name))]
 async fn create_widget(
     State(pool): State<DieselPool>,
     Json(new): Json<NewWidget>,
 ) -> Result<(StatusCode, Json<Widget>), (StatusCode, String)> {
+    REQUESTS.add(1, &[KeyValue::new("op", "create")]);
     let mut conn = pool.get().await.map_err(internal)?;
     let row = diesel::insert_into(schema::widgets::table)
         .values(&new)
@@ -104,6 +131,7 @@ async fn create_widget(
         .get_result(&mut conn)
         .await
         .map_err(internal)?;
+    tracing::info!(id = row.id, "created widget");
     Ok((StatusCode::CREATED, Json(row)))
 }
 

@@ -1,10 +1,12 @@
-# Postgres for the `diesel_widgets` example.
+# Infrastructure for the `diesel_widgets` example: Postgres + an
+# all-in-one OpenTelemetry collector/backend.
 #
 #   docker compose -f crates/muxa/examples/diesel_widgets/docker-compose.yml up -d --wait
-#   cargo run -p muxa --example diesel_widgets --features diesel-migrations
+#   cargo run -p muxa --example diesel_widgets \
+#       --features "diesel-migrations otel-otlp-tonic otel-metrics otel-logs otel-tracing-bridge"
 #
-# The example applies its embedded migrations at startup, so the database
-# just needs to be empty and reachable.
+# The example applies its embedded migrations at startup and exports OTLP
+# (traces/metrics/logs) to the collector at http://localhost:4317.
 
 services:
   db:
@@ -20,3 +22,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+
+  # grafana/otel-lgtm bundles the OpenTelemetry Collector with Loki (logs),
+  # Tempo (traces), Prometheus/Mimir (metrics) and Grafana (UI), so all three
+  # signals land in one place. Dev/demo only — not for production.
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      # OTLP receivers — what the example exports to.
+      - "4317:4317" # OTLP/gRPC
+      - "4318:4318" # OTLP/HTTP
+      # Grafana UI. Remapped to 3001 on the host because the example's web
+      # server already uses 3000. Browse http://localhost:3001 (anonymous
+      # admin is enabled in this image).
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30

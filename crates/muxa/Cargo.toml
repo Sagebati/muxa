@@ -108,6 +108,10 @@ serde = { workspace = true }
 diesel            = { workspace = true, features = ["postgres"] }
 diesel-async      = { workspace = true, features = ["postgres", "deadpool"] }
 diesel_migrations = { workspace = true }
+# `diesel_widgets` also emits its own span (tracing) + a request counter
+# (opentelemetry) so the example exercises all three OTLP signals.
+tracing           = { workspace = true }
+opentelemetry     = { workspace = true, features = ["metrics"] }
 
 # Examples are auto-discovered — no `[[example]]` entry needed for `web_only`,
 # which builds under the default features. The two below are listed *only* to
@@ -120,7 +124,11 @@ required-features = ["web", "sqlite", "otel"]
 
 [[example]]
 name = "diesel_widgets"
-required-features = ["web", "diesel", "diesel-migrations", "otel"]
+required-features = [
+    "web", "diesel", "diesel-migrations",
+    # OTLP export of all three signals (gRPC → otel-lgtm on :4317).
+    "otel", "otel-otlp-tonic", "otel-metrics", "otel-logs", "otel-tracing-bridge",
+]
 
 [lints]
 workspace = true
