@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-muxa is a batteries-included Rust web framework layered on axum 0.8. It is a Cargo workspace: a set of `muxa-*` integration crates, a `muxa` facade crate that re-exports them behind Cargo features, and a `hello` example app. Edition 2024, MSRV 1.95. Published from `github.com/samublaise/muxa`.
+muxa is a batteries-included Rust web framework layered on axum 0.8. It is a Cargo workspace: a set of `muxa-*` integration crates, a `muxa` facade crate that re-exports them behind Cargo features, and cargo-native examples under `crates/muxa/examples/`. Edition 2024, MSRV 1.95. Published from `github.com/samublaise/muxa`.
 
 The framework's lints and `clippy.toml` are intentionally kept **identical** to a downstream consumer app (katago-ws) so the framework and its consumer enforce the same bar — mirror any lint change in both places.
 
@@ -17,7 +17,7 @@ Tasks are driven by `just` (see `justfile`):
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
-- `just hello` / `just web-only` — run the example binaries (`crates`-less, under `examples/hello`).
+- `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just doc` — build + open workspace docs.
 
 Run a single test the usual way, e.g. `cargo test -p muxa-core select_deeper` or `cargo test -p muxa-sqlx --test capability`.
@@ -97,4 +97,4 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 - `muxa-otel` / `muxa-sentry` — observability plugins (push tracing layers via `ctx.telemetry`).
 - `muxa-openapi` — aide-based OpenAPI doc + re-exports `aide`/`schemars` at the pinned versions.
 - `diesel-sentry` — framework-agnostic diesel→sentry instrumentation (no muxa dep); wrapped by `muxa-diesel`'s `sentry` feature.
-- `muxa` — facade. `examples/hello` — end-to-end demo (`hello` = otel+sqlite+web; `web_only` = minimal).
+- `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal).

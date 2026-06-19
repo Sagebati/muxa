@@ -12,7 +12,6 @@ members = [
     "crates/muxa-openapi",
     "crates/diesel-sentry",
     "crates/muxa",
-    "examples/hello",
 ]
 
 [workspace.package]

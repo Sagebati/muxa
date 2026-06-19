@@ -1,10 +1,10 @@
 //! Minimal muxa demo: WebPlugin only, plus OtelPlugin for log output.
 //!
-//! Runs without any external infrastructure. Use this binary to sanity-check
+//! Runs without any external infrastructure. Use this example to sanity-check
 //! the serve loop in isolation from the database-dependent plugins.
 //!
 //! ```text
-//! cargo run -p hello --bin web_only
+//! cargo run --example web_only
 //! curl localhost:3000/
 //! ```
 

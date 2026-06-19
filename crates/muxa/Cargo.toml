@@ -96,5 +96,22 @@ muxa-otel   = { workspace = true, optional = true }
 muxa-sentry = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
 
+# Examples live in `examples/` and are auto-discovered by cargo (run with
+# `cargo run --example <name>`); these are the deps they pull in.
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+axum  = { workspace = true }
+
+# `required-features` gates each example so `cargo build/test --all-targets`
+# only builds it when its features are active (the example is skipped, not
+# failed, otherwise — e.g. `hello` needs the non-default `sqlite` pool).
+[[example]]
+name = "hello"
+required-features = ["web", "sqlite", "otel"]
+
+[[example]]
+name = "web_only"
+required-features = ["web", "otel"]
+
 [lints]
 workspace = true

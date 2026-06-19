@@ -5,7 +5,7 @@
 //! in-memory database. Override with `MUXA_SQLITE__URL` to use a file.
 //!
 //! ```text
-//! cargo run -p hello
+//! cargo run --example hello --features sqlite
 //! curl localhost:3000/
 //! curl localhost:3000/health
 //! ```
@@ -25,7 +25,7 @@ fn routes<S>(_state: &S) -> Router {
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::with_config_file(concat!(env!("CARGO_MANIFEST_DIR"), "/muxa.toml"))
+    App::with_config_file(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/muxa.toml"))
         // Observability first — installs a tracing-subscriber so later
         // plugins' info logs go somewhere.
         .with_plugin(OtelPlugin)

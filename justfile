@@ -37,13 +37,13 @@ build:
 build-release:
     cargo build --workspace --release
 
-# Run the full hello demo (otel + sqlite + auth + web, in-memory).
+# Run the full hello demo (otel + sqlite + web, in-memory).
 hello *ARGS:
-    cargo run -p hello --bin hello -- {{ARGS}}
+    cargo run -p muxa --example hello --features sqlite -- {{ARGS}}
 
 # Run the minimal web-only example (no DB, no auth).
 web-only *ARGS:
-    cargo run -p hello --bin web_only -- {{ARGS}}
+    cargo run -p muxa --example web_only -- {{ARGS}}
 
 # Build + open docs in your browser.
 doc:
