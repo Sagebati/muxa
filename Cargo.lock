@@ -2266,6 +2266,9 @@ name = "muxa"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "diesel",
+ "diesel-async",
+ "diesel_migrations",
  "muxa-core",
  "muxa-diesel",
  "muxa-openapi",
@@ -2274,6 +2277,7 @@ dependencies = [
  "muxa-sentry",
  "muxa-sqlx",
  "muxa-web",
+ "serde",
  "tokio",
 ]
 

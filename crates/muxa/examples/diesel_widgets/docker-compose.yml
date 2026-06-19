@@ -1,0 +1,22 @@
+# Postgres for the `diesel_widgets` example.
+#
+#   docker compose -f crates/muxa/examples/diesel_widgets/docker-compose.yml up -d --wait
+#   cargo run -p muxa --example diesel_widgets --features diesel-migrations
+#
+# The example applies its embedded migrations at startup, so the database
+# just needs to be empty and reachable.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: muxa
+      POSTGRES_PASSWORD: muxa
+      POSTGRES_DB: muxa
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U muxa -d muxa"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

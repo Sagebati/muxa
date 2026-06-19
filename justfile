@@ -45,6 +45,16 @@ hello *ARGS:
 web-only *ARGS:
     cargo run -p muxa --example web_only -- {{ARGS}}
 
+# Diesel JSON-API example: start Postgres via docker compose, then run it.
+diesel-compose := "crates/muxa/examples/diesel_widgets/docker-compose.yml"
+diesel-example *ARGS:
+    docker compose -f {{diesel-compose}} up -d --wait
+    cargo run -p muxa --example diesel_widgets --features diesel-migrations -- {{ARGS}}
+
+# Tear down the diesel example's Postgres (and its volume).
+diesel-example-down:
+    docker compose -f {{diesel-compose}} down -v
+
 # Build + open docs in your browser.
 doc:
     cargo doc --workspace --no-deps --open

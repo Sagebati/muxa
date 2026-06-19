@@ -1,0 +1,18 @@
+# muxa example — Diesel JSON API configuration.
+#
+# Override any value via env var, e.g. MUXA_WEB__PORT=8080 or
+# MUXA_DIESEL__URL=postgres://... . Tracing verbosity is controlled via
+# `RUST_LOG` (default: `info`).
+
+[web]
+host = "0.0.0.0"
+port = 3000
+
+[otel]
+service_name = "diesel-widgets"
+
+[diesel]
+# Matches the credentials in docker-compose.yml. Override with
+# MUXA_DIESEL__URL to point at a different database.
+url = "postgres://muxa:muxa@localhost:5432/muxa"
+max_connections = 5

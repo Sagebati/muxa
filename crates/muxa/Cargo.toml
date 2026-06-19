@@ -101,6 +101,13 @@ muxa-openapi = { workspace = true, optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 axum  = { workspace = true }
+serde = { workspace = true }
+# `diesel_widgets` example: schema/derives + async query execution. The
+# `embed_migrations!` macro expands to absolute `diesel_migrations::` paths,
+# so that crate must be in scope at the call site.
+diesel            = { workspace = true, features = ["postgres"] }
+diesel-async      = { workspace = true, features = ["postgres", "deadpool"] }
+diesel_migrations = { workspace = true }
 
 # `required-features` gates each example so `cargo build/test --all-targets`
 # only builds it when its features are active (the example is skipped, not
@@ -112,6 +119,10 @@ required-features = ["web", "sqlite", "otel"]
 [[example]]
 name = "web_only"
 required-features = ["web", "otel"]
+
+[[example]]
+name = "diesel_widgets"
+required-features = ["web", "diesel", "diesel-migrations", "otel"]
 
 [lints]
 workspace = true

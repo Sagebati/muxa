@@ -18,6 +18,7 @@ Tasks are driven by `just` (see `justfile`):
 - `just test` — `cargo test --workspace` (default features).
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
+- `just diesel-example` — bring up Postgres via docker compose and run the `diesel_widgets` JSON-API example (otel + diesel + embedded migrations); `just diesel-example-down` tears the DB down.
 - `just doc` — build + open workspace docs.
 
 Run a single test the usual way, e.g. `cargo test -p muxa-core select_deeper` or `cargo test -p muxa-sqlx --test capability`.
@@ -97,4 +98,4 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 - `muxa-otel` / `muxa-sentry` — observability plugins (push tracing layers via `ctx.telemetry`).
 - `muxa-openapi` — aide-based OpenAPI doc + re-exports `aide`/`schemars` at the pinned versions.
 - `diesel-sentry` — framework-agnostic diesel→sentry instrumentation (no muxa dep); wrapped by `muxa-diesel`'s `sentry` feature.
-- `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal).
+- `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal; `diesel_widgets` = otel + diesel/Postgres JSON API with embedded migrations + docker-compose).
