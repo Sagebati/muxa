@@ -109,16 +109,14 @@ diesel            = { workspace = true, features = ["postgres"] }
 diesel-async      = { workspace = true, features = ["postgres", "deadpool"] }
 diesel_migrations = { workspace = true }
 
-# `required-features` gates each example so `cargo build/test --all-targets`
-# only builds it when its features are active (the example is skipped, not
-# failed, otherwise — e.g. `hello` needs the non-default `sqlite` pool).
+# Examples are auto-discovered — no `[[example]]` entry needed for `web_only`,
+# which builds under the default features. The two below are listed *only* to
+# declare `required-features`: they use non-default plugins (sqlite / diesel),
+# so this tells `cargo test`/`clippy --all-targets` to skip them instead of
+# failing to compile when those features are off.
 [[example]]
 name = "hello"
 required-features = ["web", "sqlite", "otel"]
-
-[[example]]
-name = "web_only"
-required-features = ["web", "otel"]
 
 [[example]]
 name = "diesel_widgets"
