@@ -75,6 +75,8 @@ figment-based (`muxa-core/src/config.rs`). Layered, last wins:
 1. one TOML file — `$MUXA_CONFIG` if set, else `./muxa.toml` (missing file is fine);
 2. env vars prefixed `MUXA_`, `__` as the key separator — `MUXA_PGMQ__URL` → `pgmq.url`.
 
+The `MUXA_` env prefix is the default (`DEFAULT_ENV_PREFIX`) but is **configurable** so a consumer app can namespace its own env vars: `App::with_env_prefix("MYAPP_")` or `App::with_config_file_and_env_prefix(path, "MYAPP_")` (and the free fns `load_figment_with_prefix` / `load_figment_from_with_prefix`). A custom prefix also renames the bootstrap config-path var to `{prefix}CONFIG`. The prefix includes its trailing separator.
+
 Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`. Use `""` for "no config". Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` so Debug/logs redact them.
 
 ## Workspace / feature conventions

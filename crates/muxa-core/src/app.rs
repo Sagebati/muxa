@@ -44,6 +44,24 @@ impl AppBuilder<HNil> {
             path.as_ref().to_path_buf(),
         ))
     }
+
+    /// Like [`AppBuilder::default`], but reads env vars with a custom prefix
+    /// instead of `MUXA_`. The bootstrap config-path var becomes
+    /// `{prefix}CONFIG` (e.g. prefix `MYAPP_` → `$MYAPP_CONFIG`). The prefix
+    /// should include its trailing separator.
+    pub fn with_env_prefix(prefix: &str) -> Self {
+        Self::with_figment(crate::config::load_figment_with_prefix(prefix))
+    }
+
+    /// Like [`AppBuilder::with_config_file`], but reads env vars with a custom
+    /// prefix instead of `MUXA_`. The prefix should include its trailing
+    /// separator.
+    pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
+        Self::with_figment(crate::config::load_figment_from_with_prefix(
+            path.as_ref().to_path_buf(),
+            prefix,
+        ))
+    }
 }
 
 impl Default for AppBuilder<HNil> {
