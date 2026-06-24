@@ -34,5 +34,8 @@ bon            = { workspace = true }
 serde          = { workspace = true }
 secrecy        = { workspace = true }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

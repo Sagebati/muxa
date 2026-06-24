@@ -44,7 +44,13 @@ use sentry_tower::{NewSentryLayer, SentryHttpLayer};
 use serde::Deserialize;
 
 /// Configuration for [`SentryPlugin`]. Read from `[sentry]`.
-#[derive(Debug, Clone, Default, Deserialize, Builder)]
+///
+/// `Default` is hand-written (not derived) so the values match the bon
+/// `#[builder(default = …)]` attributes. This matters because `#[serde(default)]`
+/// fills missing config fields from `Default` — a derived `Default` would make
+/// `bool` fields `false`, silently disabling `attach_stacktrace`,
+/// `http_transactions`, and `logs` whenever they're absent from `[sentry]`.
+#[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct SentryConfig {
     /// Sentry DSN. If `None`/empty, the SDK initializes a no-op client and
@@ -87,6 +93,23 @@ pub struct SentryConfig {
     /// Set to `false` to disable.
     #[builder(default = true)]
     pub logs: bool,
+}
+
+impl Default for SentryConfig {
+    /// Keep these in lockstep with the `#[builder(default = …)]` attributes
+    /// above — `#[serde(default)]` uses this impl for fields omitted from config.
+    fn default() -> Self {
+        Self {
+            dsn: None,
+            environment: None,
+            release: None,
+            traces_sample_rate: None,
+            attach_stacktrace: true,
+            send_default_pii: false,
+            http_transactions: true,
+            logs: true,
+        }
+    }
 }
 
 /// Sane default for [`SentryConfig::traces_sample_rate`] when it isn't set
@@ -205,5 +228,34 @@ impl<S: State> Plugin<S> for SentryPlugin {
         }
 
         Ok(SentryHandle { _guard: guard })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SentryConfig;
+
+    /// `#[serde(default)]` fills omitted fields from `Default` — which must be
+    /// the hand-written impl, not a derived all-`false`. Regression guard: an
+    /// empty `[sentry]` table must still enable transactions, stacktraces, and
+    /// logs (the bon builder defaults), not silently disable them.
+    #[test]
+    fn empty_config_keeps_boolean_defaults_on() {
+        let cfg: SentryConfig = serde_json::from_str("{}").expect("empty object deserializes");
+        assert!(cfg.http_transactions, "http_transactions must default true");
+        assert!(cfg.attach_stacktrace, "attach_stacktrace must default true");
+        assert!(cfg.logs, "logs must default true");
+        assert!(!cfg.send_default_pii, "send_default_pii must default false");
+        assert!(cfg.traces_sample_rate.is_none(), "sample rate stays unset");
+    }
+
+    /// An explicit `false` from config must still win over the default.
+    #[test]
+    fn explicit_false_overrides_default() {
+        let cfg: SentryConfig =
+            serde_json::from_str(r#"{"logs": false, "http_transactions": false}"#).unwrap();
+        assert!(!cfg.logs);
+        assert!(!cfg.http_transactions);
+        assert!(cfg.attach_stacktrace, "untouched field keeps its default");
     }
 }
