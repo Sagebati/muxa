@@ -28,6 +28,7 @@ pub mod capability;
 pub mod config;
 pub mod ctx;
 pub mod error;
+pub mod mode;
 pub mod plugin;
 pub mod state;
 
@@ -42,6 +43,7 @@ pub use ctx::{
 };
 pub use dupe::{Dupe, Dupe_};
 pub use error::{BoxedError, Error, Result};
+pub use mode::RunMode;
 pub use muxa_telemetry::TelemetryRegistry;
 pub use plugin::Plugin;
 pub use state::{HCons, HNil, Here, Selector, State, There};
@@ -50,6 +52,6 @@ pub use state::{HCons, HNil, Here, Selector, State, There};
 pub mod prelude {
     pub use crate::{
         App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgmqBackend, PgmqPool, Plugin,
-        Result, RouterRegistry, Selector, ShutdownToken, State, TaskRegistry,
+        Result, RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
     };
 }

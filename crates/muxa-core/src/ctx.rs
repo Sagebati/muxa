@@ -26,6 +26,10 @@ pub type BoxTask = Box<dyn FnOnce(ShutdownToken) -> BoxFuture<'static, ()> + Sen
 /// serve closure.
 pub struct BuildCtx {
     figment: figment::Figment,
+    /// Coarse run mode (development vs production), resolved once from the
+    /// figment's `env` key (or the build profile). Plugins branch on this for
+    /// environment-aware defaults instead of each re-deriving it.
+    pub mode: crate::RunMode,
     /// Routes and middleware queued for the final axum router.
     pub router: RouterRegistry,
     /// Background tasks to spawn at [`crate::App::run`].
@@ -41,8 +45,10 @@ pub struct BuildCtx {
 
 impl BuildCtx {
     pub(crate) fn new(figment: figment::Figment) -> Self {
+        let mode = crate::RunMode::from_figment(&figment);
         Self {
             figment,
+            mode,
             router: RouterRegistry::default(),
             tasks: TaskRegistry::default(),
             shutdown: ShutdownToken::new(),

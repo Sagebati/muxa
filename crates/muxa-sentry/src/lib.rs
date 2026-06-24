@@ -37,7 +37,7 @@
 use std::borrow::Cow;
 
 use bon::Builder;
-use muxa_core::{BuildCtx, Plugin, Result, State};
+use muxa_core::{BuildCtx, Plugin, Result, RunMode, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use sentry::ClientInitGuard;
 use sentry_tower::{NewSentryLayer, SentryHttpLayer};
@@ -51,14 +51,22 @@ pub struct SentryConfig {
     /// no events are sent — useful for development. A [`SecretString`] so it's
     /// redacted in `Debug`/logs; exposed only to parse it at init.
     pub dsn: Option<SecretString>,
-    /// Logical environment (e.g. `"development"`, `"production"`).
+    /// Logical environment (e.g. `"development"`, `"production"`). When unset,
+    /// it defaults to the app-wide [`RunMode`](muxa_core::RunMode) label
+    /// (`BuildCtx::mode`), so Sentry events are always tagged with an
+    /// environment. Set it to override (e.g. `"staging"`).
     pub environment: Option<String>,
     /// Release identifier (e.g. `"my-app@1.2.3"`).
     pub release: Option<String>,
     /// Fraction of transactions to sample for performance monitoring.
     /// `0.0` disables performance; `1.0` samples every request.
-    #[builder(default = 0.0)]
-    pub traces_sample_rate: f32,
+    ///
+    /// When unset, a sane default is chosen from the app-wide
+    /// [`RunMode`](muxa_core::RunMode) (see [`default_traces_sample_rate`]):
+    /// production samples a small fraction (cost/quota control), development
+    /// samples everything (full local visibility). Set it explicitly — including
+    /// `0.0` — to override.
+    pub traces_sample_rate: Option<f32>,
     /// Attach stack traces to every captured event.
     #[builder(default = true)]
     pub attach_stacktrace: bool,
@@ -67,9 +75,22 @@ pub struct SentryConfig {
     #[builder(default = false)]
     pub send_default_pii: bool,
     /// Whether to wrap each request in a Sentry performance transaction.
-    /// Has no effect when `traces_sample_rate` is `0.0`.
+    /// Has no effect when the resolved `traces_sample_rate` is `0.0`.
     #[builder(default = true)]
     pub http_transactions: bool,
+}
+
+/// Sane default for [`SentryConfig::traces_sample_rate`] when it isn't set
+/// explicitly, keyed off the app-wide [`RunMode`]: production keeps a small
+/// fraction to bound ingest cost/quota; development samples every transaction
+/// for full visibility. A non-zero default means performance monitoring is on
+/// by default once a DSN is set — set the field to `0.0` to opt back out.
+#[must_use]
+pub fn default_traces_sample_rate(mode: RunMode) -> f32 {
+    match mode {
+        RunMode::Production => 0.1,
+        RunMode::Development => 1.0,
+    }
 }
 
 /// Plugin output handle.
@@ -104,11 +125,24 @@ impl<S: State> Plugin<S> for SentryPlugin {
             .filter(|raw| !raw.is_empty());
         let dsn = raw_dsn.and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
 
+        // The app-wide run mode is the source of truth for env-aware defaults.
+        let mode = ctx.mode;
+        // Default the environment label to the run mode; an explicit config wins.
+        let environment = cfg
+            .environment
+            .clone()
+            .unwrap_or_else(|| mode.as_str().to_owned());
+        // Unset rate ⇒ pick from the run mode (prod: light sampling, dev: full).
+        // An explicit value (including 0.0, to disable) wins.
+        let traces_sample_rate = cfg
+            .traces_sample_rate
+            .unwrap_or_else(|| default_traces_sample_rate(mode));
+
         let options = sentry::ClientOptions {
             dsn,
-            environment: cfg.environment.clone().map(Cow::Owned),
+            environment: Some(Cow::Owned(environment.clone())),
             release: cfg.release.clone().map(Cow::Owned),
-            traces_sample_rate: cfg.traces_sample_rate,
+            traces_sample_rate,
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
             ..Default::default()
@@ -143,9 +177,9 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
         if raw_dsn.is_some() {
             tracing::info!(
-                env = cfg.environment.as_deref().unwrap_or("-"),
+                env = environment,
                 release = cfg.release.as_deref().unwrap_or("-"),
-                traces_sample_rate = cfg.traces_sample_rate,
+                traces_sample_rate,
                 "muxa-sentry: initialized"
             );
         } else {
