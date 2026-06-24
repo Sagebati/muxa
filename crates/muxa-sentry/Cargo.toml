@@ -12,8 +12,15 @@ repository.workspace = true
 default = []
 
 # Bridge `tracing` events to Sentry via `sentry-tracing`. Layer is
-# attached to the shared `muxa-telemetry` subscriber's sentry slot.
-tracing-bridge = ["dep:sentry-tracing", "muxa-telemetry/sentry"]
+# attached to the shared `muxa-telemetry` subscriber's sentry slot. Pulls the
+# `logs` feature on both crates so INFO/WARN/ERROR events are also captured as
+# Sentry structured logs (gated at runtime by `[sentry].logs` + `enable_logs`).
+tracing-bridge = [
+    "dep:sentry-tracing",
+    "sentry/logs",
+    "sentry-tracing/logs",
+    "muxa-telemetry/sentry",
+]
 
 [dependencies]
 muxa-core      = { workspace = true }

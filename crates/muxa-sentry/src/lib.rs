@@ -78,6 +78,15 @@ pub struct SentryConfig {
     /// Has no effect when the resolved `traces_sample_rate` is `0.0`.
     #[builder(default = true)]
     pub http_transactions: bool,
+    /// Capture `tracing` events (INFO/WARN/ERROR) as Sentry **structured logs**,
+    /// queryable in the Logs explorer. Independent of tracing/transactions.
+    ///
+    /// Requires the `tracing-bridge` feature (which carries the `logs` cargo
+    /// feature) — without it this flag is inert. On by default once a DSN is
+    /// set; note every INFO+ event is shipped, so it consumes Sentry log quota.
+    /// Set to `false` to disable.
+    #[builder(default = true)]
+    pub logs: bool,
 }
 
 /// Sane default for [`SentryConfig::traces_sample_rate`] when it isn't set
@@ -138,6 +147,13 @@ impl<S: State> Plugin<S> for SentryPlugin {
             .traces_sample_rate
             .unwrap_or_else(|| default_traces_sample_rate(mode));
 
+        // Structured logs: ship INFO+ tracing events to Sentry's Logs product.
+        // `enable_logs` is a no-op unless the `logs` cargo feature is compiled,
+        // which only the `tracing-bridge` feature pulls — so gate on it to keep
+        // the startup log honest. The sentry-tracing default filter already maps
+        // INFO/WARN→Log and ERROR→Event|Log once that feature is active.
+        let enable_logs = cfg.logs && cfg!(feature = "tracing-bridge");
+
         let options = sentry::ClientOptions {
             dsn,
             environment: Some(Cow::Owned(environment.clone())),
@@ -145,6 +161,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
             traces_sample_rate,
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
+            enable_logs,
             ..Default::default()
         };
 
@@ -180,6 +197,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
                 env = environment,
                 release = cfg.release.as_deref().unwrap_or("-"),
                 traces_sample_rate,
+                logs = enable_logs,
                 "muxa-sentry: initialized"
             );
         } else {
