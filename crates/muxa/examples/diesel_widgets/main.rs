@@ -155,10 +155,13 @@ where
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::with_config_file(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/examples/diesel_widgets/muxa.toml"
-    ))
+    App::with_config_file_and_root(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/diesel_widgets/app.toml"
+        ),
+        "muxa",
+    )
     // Observability first so later plugins' logs have a subscriber.
     .with_plugin(OtelPlugin)
     .await?

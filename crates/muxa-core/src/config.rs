@@ -70,6 +70,25 @@ pub fn load_figment_from_with_prefix<P: Into<PathBuf>>(path: P, prefix: &str) ->
         .merge(Env::prefixed(prefix).split("__").ignore(&["config"]))
 }
 
+/// Rescope `figment` so plugin config (`Plugin::CONFIG_PREFIX` lookups) is
+/// read from the `root` key path instead of the figment's top level.
+/// Returns an empty figment if `root` isn't present in `figment` — plugins
+/// then fall back to `Config::default()`, matching the existing
+/// missing-section behaviour.
+///
+/// This is how a consuming app avoids a dedicated `muxa.toml`: build one
+/// figment for the whole app (own file, own env prefix) with muxa's plugin
+/// sections grouped under one table (e.g. `[muxa]`), extract your own app
+/// config from that figment yourself, then pass it through this before
+/// handing it to [`crate::AppBuilder::with_figment_at`] — only the `root`
+/// subtree becomes visible to plugins from that point on.
+pub fn nested_figment(figment: &Figment, root: &str) -> Figment {
+    match figment.find_value(root) {
+        Ok(value) => Figment::from(figment::providers::Serialized::defaults(value)),
+        Err(_) => Figment::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +109,58 @@ mod tests {
             // The default prefix must NOT pick up the custom-prefixed var.
             let default = load_figment_from_with_prefix("does-not-exist.toml", DEFAULT_ENV_PREFIX);
             assert!(default.extract_inner::<String>("pgmq.url").is_err());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn nested_figment_rescopes_to_root_and_hides_siblings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "app.toml",
+                r#"
+                    app_name = "my-app"
+
+                    [muxa.web]
+                    port = 4000
+                "#,
+            )?;
+
+            let fig = load_figment_from("app.toml");
+            let scoped = nested_figment(&fig, "muxa");
+
+            let port: u16 = scoped.extract_inner("web.port").unwrap();
+            assert_eq!(port, 4000);
+
+            // Sibling top-level keys outside the root must not leak in.
+            assert!(scoped.extract_inner::<String>("app_name").is_err());
+
+            // The original figment is untouched and still sees everything.
+            let app_name: String = fig.extract_inner("app_name").unwrap();
+            assert_eq!(app_name, "my-app");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn nested_figment_missing_root_is_empty() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("app.toml", r#"app_name = "my-app""#)?;
+
+            let fig = load_figment_from("app.toml");
+            let scoped = nested_figment(&fig, "muxa");
+
+            assert!(scoped.extract_inner::<String>("web.port").is_err());
 
             Ok(())
         });

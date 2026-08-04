@@ -1,16 +1,20 @@
-# muxa example app — single-file configuration.
-# Override any value via env var, e.g. MUXA_WEB__PORT=8080.
+# Host app's own config file — muxa's plugin config lives under [muxa],
+# grouped and collision-free against this app's own top-level keys.
+# Override any muxa value via env, e.g. MUXA_MUXA__WEB__PORT=8080.
 #
 # Tracing verbosity is controlled via `RUST_LOG` (default: `info`).
 
-[web]
+[app]
+greeting = "hello, muxa (sqlite)"
+
+[muxa.web]
 host = "0.0.0.0"
 port = 3000
 
-[otel]
+[muxa.otel]
 service_name = "hello"
 
-[sqlite]
+[muxa.sqlite]
 # In-memory by default; perfect for the example. Use e.g.
 #   url = "sqlite:./hello.db"
 # (and `create_if_missing = true`) for a persistent file.

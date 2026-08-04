@@ -62,6 +62,36 @@ impl AppBuilder<HNil> {
             prefix,
         ))
     }
+
+    /// Like [`AppBuilder::with_figment`], but scopes plugin config to the
+    /// `root` key path within `figment` (see
+    /// [`crate::config::nested_figment`]). Lets a consuming app fold muxa's
+    /// config into its own config file/figment instead of needing a
+    /// dedicated `muxa.toml` — e.g. `root = "muxa"` reads plugin sections
+    /// from `[muxa.web]`/`[muxa.otel]`/... instead of top-level
+    /// `[web]`/`[otel]`/....
+    ///
+    /// Build `figment` yourself first (your file, your env prefix, your own
+    /// top-level app keys) and extract your own config from it before
+    /// calling this — only the `root` subtree is visible to plugins
+    /// afterward. The top-level `env` key (see [`crate::RunMode`]) is still
+    /// read from the original, un-scoped `figment`, so it keeps working
+    /// wherever a host app would naturally put it.
+    pub fn with_figment_at(figment: Figment, root: &str) -> Self {
+        let mode = crate::RunMode::from_figment(&figment);
+        let scoped = crate::config::nested_figment(&figment, root);
+        Self {
+            state: HNil,
+            ctx: BuildCtx::new_with_mode(scoped, mode),
+        }
+    }
+
+    /// Like [`AppBuilder::with_config_file`], but additionally scopes plugin
+    /// config to `root` (see [`AppBuilder::with_figment_at`]).
+    pub fn with_config_file_and_root<P: AsRef<Path>>(path: P, root: &str) -> Self {
+        let figment = crate::config::load_figment_from(path.as_ref().to_path_buf());
+        Self::with_figment_at(figment, root)
+    }
 }
 
 impl Default for AppBuilder<HNil> {

@@ -46,6 +46,14 @@ pub struct BuildCtx {
 impl BuildCtx {
     pub(crate) fn new(figment: figment::Figment) -> Self {
         let mode = crate::RunMode::from_figment(&figment);
+        Self::new_with_mode(figment, mode)
+    }
+
+    /// Like [`BuildCtx::new`], but with `mode` resolved by the caller instead
+    /// of derived from `figment`. Used when `figment` has already been
+    /// rescoped (e.g. via [`crate::config::nested_figment`]) and `mode` needs
+    /// to reflect the original, un-scoped figment's `env` key.
+    pub(crate) fn new_with_mode(figment: figment::Figment, mode: crate::RunMode) -> Self {
         Self {
             figment,
             mode,
