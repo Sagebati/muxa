@@ -1,24 +1,25 @@
-# muxa example — Diesel JSON API configuration.
+# Host app's own config file — muxa's plugin config lives under [muxa],
+# grouped and collision-free against this app's own top-level keys.
 #
-# Override any value via env var, e.g. MUXA_WEB__PORT=8080 or
-# MUXA_DIESEL__URL=postgres://... . Tracing verbosity is controlled via
+# Override any value via env var, e.g. MUXA_MUXA__WEB__PORT=8080 or
+# MUXA_MUXA__DIESEL__URL=postgres://... . Tracing verbosity is controlled via
 # `RUST_LOG` (default: `info`).
 
-[web]
+[muxa.web]
 host = "0.0.0.0"
 port = 3000
 
-[otel]
+[muxa.otel]
 service_name = "diesel-widgets"
 # OTLP/gRPC endpoint of the otel-lgtm collector in docker-compose.yml.
 # Export only happens when an OTLP transport feature is compiled in (see the
 # `just diesel-example` recipe); otherwise this is ignored. Override with
-# MUXA_OTEL__ENDPOINT.
+# MUXA_MUXA__OTEL__ENDPOINT.
 endpoint = "http://localhost:4317"
 metric_interval_secs = 5
 
-[diesel]
+[muxa.diesel]
 # Matches the credentials in docker-compose.yml. Override with
-# MUXA_DIESEL__URL to point at a different database.
+# MUXA_MUXA__DIESEL__URL to point at a different database.
 url = "postgres://muxa:muxa@localhost:5433/muxa"
 max_connections = 5
