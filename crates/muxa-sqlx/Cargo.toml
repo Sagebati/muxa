@@ -55,6 +55,7 @@ muxa-core   = { workspace = true }
 dupe        = { workspace = true }
 sqlx        = { workspace = true }
 bon         = { workspace = true }
+secrecy     = { workspace = true }
 serde       = { workspace = true }
 tracing     = { workspace = true }
 

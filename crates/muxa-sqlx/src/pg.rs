@@ -5,6 +5,7 @@ use std::ops::Deref;
 use bon::Builder;
 use dupe::Dupe;
 use muxa_core::{BuildCtx, Error, PgmqBackend, PgmqPool, Plugin, Result, State};
+use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
 /// Newtype wrapping `sqlx::PgPool`.
@@ -56,8 +57,10 @@ fn default_min_connections() -> u32 {
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct SqlxConfig {
-    /// Postgres connection URL. **Required** — there is no default.
-    pub url: String,
+    /// Postgres connection URL. **Required** — there is no default. Held as a
+    /// [`SecretString`] so it's redacted in `Debug`/logs and never copied
+    /// around in the clear; the value is exposed only when building the pool.
+    pub url: SecretString,
     /// Maximum number of pool connections. Defaults to 10.
     #[builder(default = default_max_connections())]
     pub max_connections: u32,
@@ -69,7 +72,7 @@ pub struct SqlxConfig {
 impl Default for SqlxConfig {
     fn default() -> Self {
         Self {
-            url: String::new(),
+            url: SecretString::from(String::new()),
             max_connections: default_max_connections(),
             min_connections: default_min_connections(),
         }
@@ -86,7 +89,7 @@ impl<S: State> Plugin<S> for SqlxPlugin {
     const CONFIG_PREFIX: &'static str = "sqlx";
 
     async fn build(self, cfg: SqlxConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<SqlxPool> {
-        if cfg.url.is_empty() {
+        if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
                 "muxa-sqlx: `sqlx.url` is required (set in config or MUXA_SQLX__URL)",
             ));
@@ -101,11 +104,34 @@ impl<S: State> Plugin<S> for SqlxPlugin {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(cfg.max_connections)
             .min_connections(cfg.min_connections)
-            .connect(&cfg.url)
+            .connect(cfg.url.expose_secret())
             .await
             .map_err(Error::other)?;
 
         tracing::info!("muxa-sqlx[pg]: connected");
         Ok(SqlxPool(pool))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of wrapping `url` in `SecretString`: a `Debug` dump of the
+    /// config (e.g. an accidental `tracing::debug!(?cfg)`) must never reveal it.
+    #[test]
+    fn url_is_redacted_in_debug() {
+        let cfg = SqlxConfig {
+            url: SecretString::from("postgres://user:hunter2@db:5432/app".to_owned()),
+            ..SqlxConfig::default()
+        };
+        let rendered = format!("{cfg:?}");
+        assert!(!rendered.contains("hunter2"), "secret leaked: {rendered}");
+        assert!(
+            !rendered.contains("postgres://"),
+            "secret leaked: {rendered}"
+        );
+        // Non-secret fields still render — only the secret is hidden.
+        assert!(rendered.contains("max_connections"));
     }
 }
