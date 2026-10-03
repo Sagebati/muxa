@@ -100,7 +100,8 @@ muxa-openapi = { workspace = true, optional = true }
 # `cargo run --example <name>`); these are the deps they pull in.
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-axum  = { workspace = true }
+# Examples use the JSON extractor/response on top of the bare router.
+axum  = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 # `diesel_widgets` example: schema/derives + async query execution. The
 # `embed_migrations!` macro expands to absolute `diesel_migrations::` paths,

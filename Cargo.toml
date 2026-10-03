@@ -77,7 +77,11 @@ futures     = "0.3"
 pin-project-lite = "0.2"
 
 # HTTP & middleware
-axum        = "0.8"
+# No default features: axum's `tokio`/`http1` defaults pull hyper-util's server →
+# tokio `net` → mio, which does not build for wasm32-unknown-unknown. Each crate
+# enables only what it uses (muxa-web owns the serve loop, so it adds
+# `tokio` + `http1`).
+axum        = { version = "0.8", default-features = false }
 tower       = { version = "0.5", features = ["util"] }
 tower-http  = { version = "0.6", features = ["trace"] }
 http        = "1"
