@@ -1,9 +1,11 @@
 //! `App` and `AppBuilder` — the entry point and plugin-chain accumulator.
 
 use std::path::Path;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
 use figment::Figment;
+#[cfg(not(target_family = "wasm"))]
 use tracing::Instrument as _;
 
 use crate::ctx::BuildCtx;
@@ -114,8 +116,46 @@ impl<S: State> AppBuilder<S> {
         })
     }
 
+    /// Finish the app **without serving**: compose the router and hand it
+    /// back together with the final state HList.
+    ///
+    /// This is the terminal step for hosts that drive the router themselves
+    /// instead of running a serve loop — Cloudflare Workers (see
+    /// `muxa-worker`), serverless adapters, or tests calling the router as a
+    /// `tower::Service`.
+    ///
+    /// Such hosts have nowhere to run background tasks, so tasks registered
+    /// via [`TaskRegistry::spawn`](crate::TaskRegistry::spawn) are an
+    /// **error** here rather than being silently dropped. A caller that can
+    /// run them itself takes them first with
+    /// `app.ctx_mut().tasks.drain()`. A registered serve function (a
+    /// `WebPlugin` in the chain) is an error for the same reason: it would
+    /// never be invoked.
+    pub fn into_router(self) -> Result<(axum::Router, S)> {
+        if self.ctx.serve_fn.is_some() {
+            return Err(Error::other(
+                "into_router() called with a serve function registered — \
+                 a serving plugin (WebPlugin) can't be combined with into_router()",
+            ));
+        }
+        let pending = self.ctx.tasks.names();
+        if !pending.is_empty() {
+            return Err(Error::other(format!(
+                "into_router() can't run background tasks, but {} are registered: {} — \
+                 drain them with `ctx_mut().tasks.drain()` and run them yourself",
+                pending.len(),
+                pending.join(", "),
+            )));
+        }
+        Ok((self.ctx.router.compose(), self.state))
+    }
+
     /// Freeze the state, spawn background tasks, compose the router, and run
     /// the registered serve function until shutdown.
+    ///
+    /// Not available on wasm targets — there is no tokio runtime to spawn
+    /// onto; use [`AppBuilder::into_router`] there.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn run(mut self) -> Result<()> {
         let serve = self.ctx.serve_fn.take().ok_or_else(|| {
             Error::other("no serve function registered — did you forget to add a WebPlugin?")
@@ -178,6 +218,69 @@ mod tests {
         // After AnswerPlugin: state is HCons<i32, HNil>.
         let _: &HCons<i32, HNil> = app.state();
         assert_eq!(app.state().head, 42);
+    }
+
+    /// A plugin that mounts one route and (optionally) registers a task.
+    struct RoutePlugin {
+        with_task: bool,
+    }
+    impl<S: State> Plugin<S> for RoutePlugin {
+        type Output = ();
+        type Config = ();
+        const CONFIG_PREFIX: &'static str = "";
+
+        async fn build(self, _cfg: (), _state: &S, ctx: &mut BuildCtx) -> Result<()> {
+            ctx.router.mount(
+                "/",
+                axum::Router::new().route("/ping", axum::routing::get(|| async { "pong" })),
+            );
+            if self.with_task {
+                ctx.tasks.spawn("ticker", |_shutdown| async {});
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn into_router_returns_composed_router_and_state() {
+        use tower::ServiceExt as _;
+
+        let (router, state) = AppBuilder::<HNil>::with_figment(Figment::new())
+            .with_plugin(AnswerPlugin)
+            .await
+            .unwrap()
+            .with_plugin(RoutePlugin { with_task: false })
+            .await
+            .unwrap()
+            .into_router()
+            .unwrap();
+        assert_eq!(state.tail.head, 42);
+
+        let request = http::Request::get("/ping")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn into_router_rejects_registered_tasks() {
+        let app = AppBuilder::<HNil>::with_figment(Figment::new())
+            .with_plugin(RoutePlugin { with_task: true })
+            .await
+            .unwrap();
+        let err = app.into_router().map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("ticker"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn into_router_accepts_drained_tasks() {
+        let mut app = AppBuilder::<HNil>::with_figment(Figment::new())
+            .with_plugin(RoutePlugin { with_task: true })
+            .await
+            .unwrap();
+        assert_eq!(app.ctx_mut().tasks.drain().len(), 1);
+        assert!(app.into_router().is_ok());
     }
 
     #[tokio::test]

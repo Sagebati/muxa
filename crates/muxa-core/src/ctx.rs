@@ -193,6 +193,16 @@ impl TaskRegistry {
             .push((name, Box::new(|shutdown| Box::pin(func(shutdown)))));
     }
 
+    /// Names of the tasks scheduled so far, in registration order.
+    pub fn names(&self) -> Vec<&'static str> {
+        self.tasks.iter().map(|(name, _)| *name).collect()
+    }
+
+    /// `true` when no task has been scheduled.
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
     /// Drain all scheduled tasks for spawning.
     pub fn drain(&mut self) -> Vec<(&'static str, BoxTask)> {
         std::mem::take(&mut self.tasks)
