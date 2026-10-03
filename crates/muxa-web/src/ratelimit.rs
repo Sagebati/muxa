@@ -29,9 +29,9 @@ use http::Request;
 use muxa_core::Error;
 use serde::Deserialize;
 use tower_governor::GovernorLayer;
+use tower_governor::errors::GovernorError;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::{KeyExtractor, PeerIpKeyExtractor, SmartIpKeyExtractor};
-use tower_governor::errors::GovernorError;
 
 /// How often the background janitor evicts idle per-IP buckets.
 const EVICT_INTERVAL: Duration = Duration::from_secs(60);

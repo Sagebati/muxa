@@ -54,7 +54,8 @@ impl MigrationsRunner {
         // implements `AsyncConnection`, so the bare method call is ambiguous.
         tokio::task::spawn_blocking(move || {
             diesel::Connection::transaction(&mut wrapper, |conn| {
-                conn.run_pending_migrations(migrations).map(|versions| versions.len())
+                conn.run_pending_migrations(migrations)
+                    .map(|versions| versions.len())
             })
         })
         .await
