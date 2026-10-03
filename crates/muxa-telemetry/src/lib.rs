@@ -118,8 +118,14 @@ fn install_subscriber() -> Option<Slot> {
     // (A per-layer filter on a reload-*injected* layer panics: it never
     // receives a FilterId.)
     let subscriber = tracing_subscriber::registry()
-        .with(layers_slot.with_filter(plugin_filter(Arc::clone(&excluded))))
-        .with(tracing_subscriber::fmt::layer().with_filter(level_filter()));
+        .with(layers_slot.with_filter(plugin_filter(Arc::clone(&excluded))));
+
+    // wasm has no stdout and no clock (`fmt`'s timestamp panics on
+    // wasm32-unknown-unknown), so there the subscriber is the plugin slot
+    // alone; the host plugin (e.g. muxa-worker's console layer) adds the
+    // output layer through `add_layer`.
+    #[cfg(not(target_family = "wasm"))]
+    let subscriber = subscriber.with(tracing_subscriber::fmt::layer().with_filter(level_filter()));
 
     subscriber.try_init().ok()?;
 
@@ -143,6 +149,7 @@ impl TelemetryRegistry {
     /// Get the process's plugin-layer slot, installing the global subscriber
     /// on the first call: a reload slot for plugin layers, then a plain
     /// `fmt::layer()` filtered by `EnvFilter` (`RUST_LOG`, default `info`).
+    /// On wasm targets the `fmt` layer is left out (no stdout, no clock).
     ///
     /// If the application installed its own subscriber first, the registry is
     /// detached and `add_layer` becomes a silent no-op.

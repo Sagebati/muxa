@@ -34,7 +34,14 @@ muxa-openapi = { workspace = true, optional = true }
 tokio       = { workspace = true }
 tokio-util  = { workspace = true }
 futures     = { workspace = true }
-axum        = { workspace = true }
+# The workspace pin turns axum's default features off so muxa-core builds for
+# wasm; this is the native web path, so turn all of them back on. `tokio` +
+# `http1` drive the serve loop; `tracing` logs accept errors and rejections;
+# `matched-path`/`original-uri` are what route-aware middleware reads; `json`/
+# `query`/`form` are the extractors apps expect from plain axum.
+axum        = { workspace = true, features = [
+    "form", "http1", "json", "matched-path", "original-uri", "query", "tokio", "tower-log", "tracing",
+] }
 tower       = { workspace = true }
 # Per-IP rate limiting; only when the `ratelimit` feature is on. `governor` is
 # the underlying GCRA limiter (needed to name the layer's middleware type).
