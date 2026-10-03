@@ -84,15 +84,11 @@ pub struct TelemetryRegistry {
 impl TelemetryRegistry {
     /// Install a global subscriber: a reload slot for plugin layers, then a
     /// plain `fmt::layer()` filtered by `EnvFilter` (`RUST_LOG`, default `info`).
+    /// On wasm targets the `fmt` layer is left out (no stdout, no clock).
     ///
     /// Silent no-op if a subscriber is already installed (the slot is left
     /// unallocated and `add_layer` becomes a no-op).
     pub fn install() -> Self {
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
-        let fmt_layer = tracing_subscriber::fmt::layer().with_filter(filter);
-
         // One reload slot: a stack of boxed plugin layers, sitting directly on
         // Registry. fmt is generic and layers freely on top.
         let (layers_slot, layers_handle) = reload::Layer::new(Vec::<BoxedLayer>::new());
@@ -102,9 +98,19 @@ impl TelemetryRegistry {
         // (A per-layer filter on a reload-*injected* layer panics: it never
         // receives a FilterId.) Honours RUST_LOG and drops export-path targets
         // to prevent feedback loops; applies uniformly to every plugin layer.
-        let subscriber = tracing_subscriber::registry()
-            .with(layers_slot.with_filter(layer_filter()))
-            .with(fmt_layer);
+        let subscriber =
+            tracing_subscriber::registry().with(layers_slot.with_filter(layer_filter()));
+
+        // wasm has no stdout and no clock (`fmt`'s timestamp panics on
+        // wasm32-unknown-unknown), so there the subscriber is the plugin slot
+        // alone; the host plugin (e.g. muxa-worker's console layer) adds the
+        // output layer through `add_layer`.
+        #[cfg(not(target_family = "wasm"))]
+        let subscriber = {
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            subscriber.with(tracing_subscriber::fmt::layer().with_filter(filter))
+        };
 
         let installed = subscriber.try_init().is_ok();
 

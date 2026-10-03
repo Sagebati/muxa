@@ -12,11 +12,12 @@ The framework's lints and `clippy.toml` are intentionally kept **identical** to 
 
 Tasks are driven by `just` (see `justfile`):
 
-- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq`. Run this before declaring work done.
+- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `check-wasm`. Run this before declaring work done.
 - `just lint` — `cargo clippy --workspace --all-targets --no-deps -- -D warnings`. Warnings are errors.
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
+- `just check-wasm` — `cargo check` of `muxa-core`, `muxa-worker` and the `worker` facade feature for `wasm32-unknown-unknown` (needs the rustup target). Keeps the Cloudflare Workers path building.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
 - `just doc` — build + open workspace docs.
@@ -66,6 +67,12 @@ At `App::run`: background tasks are spawned, the router is `compose()`d (auto-mo
 
 `WebPlugin::new(routes)` takes a `routes: fn(&S) -> Router` callback. Its `build` runs that callback against the current state, so the state must already hold every other plugin's resource — hence web goes last. It also owns the axum serve loop + graceful-shutdown handshake via `set_serve_fn`.
 
+### Finishing without serving (Cloudflare Workers)
+
+`AppBuilder::into_router()` is the alternative terminal step to `run()`: it composes the router and returns `(Router, S)` for a host that drives requests itself. `muxa-worker` builds on it — `WorkerPlugin::new(routes)` replaces `WebPlugin` (mounts routes, no `serve_fn`), and `muxa_worker::dispatch(req, env, build)` runs the chain once per isolate, caches the router in a thread-local, inserts the per-request `worker::Env` into request extensions (`WorkerEnv` extractor) and calls the router. There are no background tasks on Workers, so `into_router` **errors** if any task (or a serve fn) is registered rather than dropping it. `run()` is compiled out on wasm.
+
+To keep wasm building: the workspace `axum` pin has `default-features = false` (its `tokio`/`http1` defaults pull mio); `muxa-web` turns those back on for itself. Don't add axum features to `muxa-core`. `muxa-telemetry` skips its `fmt` layer on wasm; `WorkerPlugin` adds a console layer instead. Config on Workers comes from `WorkerVars` (figment provider over string vars/secrets, same prefix/`__` convention as env vars).
+
 ### Non-Send build futures (deliberate)
 
 `Plugin::build` returns a future that is **not** required to be `Send`. The build phase is awaited inline on the current thread, never spawned across runtimes. This is intentional: it lets plugins call sqlx `Executor<'_>` on `&mut PgConnection` inside `build` without tripping a known Rust HRTB/Send-inference limitation. The same limitation is why `muxa-pgmq` has per-backend `Plugin` impls in feature-gated submodules rather than one trait abstraction over backends. Background tasks, by contrast, *are* `Send + 'static` (enforced at `tokio::spawn`).
@@ -92,6 +99,7 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 - `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors. No integrations.
 - `muxa-telemetry` — `TelemetryRegistry` (subscriber layer kernel, reload handle).
 - `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`).
+- `muxa-worker` — Cloudflare Workers: `WorkerPlugin`, `dispatch`, `WorkerEnv` extractor, `WorkerVars` figment provider, `ConsoleLayer`. Facade features `worker` / `worker-d1`.
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.

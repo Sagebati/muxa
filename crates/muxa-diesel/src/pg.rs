@@ -147,7 +147,8 @@ impl<S: State> Plugin<S> for DieselPlugin {
             "muxa-diesel[pg]: connecting"
         );
 
-        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
+        let manager =
+            AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
         let pool = Pool::builder(manager)
             .max_size(cfg.max_connections as usize)
             .build()
@@ -172,7 +173,10 @@ mod tests {
         };
         let rendered = format!("{cfg:?}");
         assert!(!rendered.contains("hunter2"), "secret leaked: {rendered}");
-        assert!(!rendered.contains("postgres://"), "secret leaked: {rendered}");
+        assert!(
+            !rendered.contains("postgres://"),
+            "secret leaked: {rendered}"
+        );
         // Non-secret fields still render — only the secret is hidden.
         assert!(rendered.contains("max_connections"));
     }

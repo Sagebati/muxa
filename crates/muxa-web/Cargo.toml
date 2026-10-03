@@ -34,7 +34,8 @@ muxa-openapi = { workspace = true, optional = true }
 tokio       = { workspace = true }
 tokio-util  = { workspace = true }
 futures     = { workspace = true }
-axum        = { workspace = true }
+# The serve loop: `tokio` (axum::serve, ConnectInfo) + `http1`.
+axum        = { workspace = true, features = ["tokio", "http1"] }
 tower       = { workspace = true }
 # Per-IP rate limiting; only when the `ratelimit` feature is on. `governor` is
 # the underlying GCRA limiter (needed to name the layer's middleware type).

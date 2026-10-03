@@ -30,6 +30,8 @@ pub use muxa_sentry as sentry;
 pub use muxa_sqlx as sqlx;
 #[cfg(feature = "web")]
 pub use muxa_web as web;
+#[cfg(feature = "worker")]
+pub use muxa_worker as worker;
 
 /// Common imports for application code. Brings `App`, `AppBuilder`, the
 /// `Plugin` trait, the capability traits, and one canonical plugin from
@@ -39,6 +41,9 @@ pub mod prelude {
 
     #[cfg(feature = "web")]
     pub use muxa_web::WebPlugin;
+
+    #[cfg(feature = "worker")]
+    pub use muxa_worker::{WorkerEnv, WorkerPlugin};
 
     #[cfg(feature = "ratelimit")]
     pub use muxa_web::ratelimit::{RateLimitConfig, per_ip_layer};
