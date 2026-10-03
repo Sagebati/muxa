@@ -25,6 +25,13 @@ web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
 ratelimit           = ["dep:muxa-web", "muxa-web/ratelimit"]
 
+# Cloudflare Workers: `WorkerPlugin` (routes, no serve loop) + request
+# dispatch through the composed router. Build with `default-features = false`
+# — the default `web`/`otel` plugins don't target wasm.
+worker              = ["dep:muxa-worker"]
+# D1 bindings on the per-request `Env` (`env.d1("DB")`).
+worker-d1           = ["worker", "muxa-worker?/d1"]
+
 # SQLx Postgres pool (the default driver — produces `SqlxPool`, `SqlxPlugin`).
 sqlx                = ["dep:muxa-sqlx", "muxa-sqlx/postgres", "muxa-sqlx/tls-rustls", "muxa-pgmq?/sqlx"]
 sqlx-tls-native     = ["dep:muxa-sqlx", "muxa-sqlx/postgres", "muxa-sqlx/tls-native", "muxa-pgmq?/sqlx"]
@@ -95,6 +102,7 @@ muxa-pgmq   = { workspace = true, optional = true }
 muxa-otel   = { workspace = true, optional = true }
 muxa-sentry = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
+muxa-worker = { workspace = true, optional = true }
 
 # Examples live in `examples/` and are auto-discovered by cargo (run with
 # `cargo run --example <name>`); these are the deps they pull in.
