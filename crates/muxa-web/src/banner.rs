@@ -1,6 +1,8 @@
-//! Rocket-style launch banner. Printed once to stderr when the server
-//! binds, showing the bound URL, mounted router prefixes, and the merged
-//! figment configuration as TOML.
+//! Launch banner. Printed once to stderr when the server binds, showing the
+//! bound URL and the mounted router prefixes.
+//!
+//! It deliberately does not print configuration: the web plugin only sees its
+//! own section, and raw configuration values include other plugins' secrets.
 
 use std::io::Write as _;
 use std::net::SocketAddr;
@@ -13,7 +15,7 @@ use muxa_core::Mount;
 /// `port = 0` and the OS picked one). `mounts` is the snapshot of
 /// router prefixes taken from `RouterRegistry::mounts()` at
 /// `WebPlugin::build` time.
-pub fn print(bound: SocketAddr, figment: &figment::Figment, mounts: &[(String, Mount)]) {
+pub fn print(bound: SocketAddr, mounts: &[(String, Mount)]) {
     let mut out = std::io::stderr().lock();
     let _ = writeln!(out);
     let _ = writeln!(out, "🪡  muxa serving at http://{bound}/");
@@ -42,31 +44,6 @@ pub fn print(bound: SocketAddr, figment: &figment::Figment, mounts: &[(String, M
         }
     }
     let _ = writeln!(out);
-
-    // ── effective configuration ──
-    match figment.extract::<toml::Value>() {
-        Ok(value) => match toml::to_string_pretty(&value) {
-            Ok(rendered) if !rendered.trim().is_empty() => {
-                let _ = writeln!(out, "  configuration");
-                for line in rendered.lines() {
-                    let _ = writeln!(out, "    {line}");
-                }
-                let _ = writeln!(out);
-            }
-            Ok(_) => {
-                let _ = writeln!(out, "  configuration  (empty figment)");
-                let _ = writeln!(out);
-            }
-            Err(err) => {
-                let _ = writeln!(out, "  configuration  (failed to serialize as TOML: {err})");
-                let _ = writeln!(out);
-            }
-        },
-        Err(err) => {
-            let _ = writeln!(out, "  configuration  (could not extract figment: {err})");
-            let _ = writeln!(out);
-        }
-    }
 }
 
 fn display_prefix(prefix: &str) -> &str {

@@ -7,7 +7,7 @@ use diesel_async::AsyncPgConnection;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
 use dupe::Dupe;
-use muxa_core::{BuildCtx, Error, PgmqBackend, PgmqPool, Plugin, Result, State};
+use muxa_core::{BuildCtx, Error, PgBackend, Plugin, Result, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
@@ -32,12 +32,10 @@ impl From<Pool<AsyncPgConnection>> for DieselPool {
 // refcount bump.
 impl Dupe for DieselPool {}
 
-impl PgmqPool for DieselPool {}
-
 /// Backend marker for the async Diesel Postgres pool.
 pub struct DieselBackend;
 
-impl PgmqBackend for DieselBackend {
+impl PgBackend for DieselBackend {
     type Pool = DieselPool;
 }
 // `HasPgExecutorFor<DieselBackend, _>` is supplied by the blanket impl in

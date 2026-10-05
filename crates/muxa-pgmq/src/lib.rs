@@ -1,4 +1,4 @@
-//! muxa-pgmq — `PgmqPlugin<B, Idx>` generic over a `PgmqBackend`, backed by
+//! muxa-pgmq — `PgmqPlugin<B, Idx>` generic over a `PgBackend`, backed by
 //! the [Sagebati/pgmq](https://github.com/Sagebati/pgmq) fork that abstracts
 //! over driver pools through Cargo features.
 //!
@@ -55,7 +55,7 @@
 
 use std::marker::PhantomData;
 
-use muxa_core::{Here, PgmqBackend};
+use muxa_core::{Here, PgBackend};
 use serde::Deserialize;
 
 /// Configuration for [`PgmqPlugin`]. Read from `[pgmq]`.
@@ -76,12 +76,12 @@ pub struct PgmqConfig {
 ///
 /// The actual `Plugin` impls live in feature-gated submodules — one per
 /// supported backend.
-pub struct PgmqPlugin<B: PgmqBackend, Idx = Here> {
+pub struct PgmqPlugin<B: PgBackend, Idx = Here> {
     queues: Vec<String>,
     _phantom: PhantomData<fn() -> (B, Idx)>,
 }
 
-impl<B: PgmqBackend, Idx> PgmqPlugin<B, Idx> {
+impl<B: PgBackend, Idx> PgmqPlugin<B, Idx> {
     /// Construct a plugin with no preconfigured queues.
     pub fn new() -> Self {
         Self {
@@ -102,7 +102,7 @@ impl<B: PgmqBackend, Idx> PgmqPlugin<B, Idx> {
     }
 }
 
-impl<B: PgmqBackend, Idx> Default for PgmqPlugin<B, Idx> {
+impl<B: PgBackend, Idx> Default for PgmqPlugin<B, Idx> {
     fn default() -> Self {
         Self::new()
     }

@@ -129,6 +129,22 @@ impl<S: State> Plugin<S> for OtelPlugin {
             // Each entry flushes one provider on shutdown.
             let mut flushes: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
 
+            // The crates on the OTLP export path (tonic→h2→hyper, or reqwest,
+            // and the SDK itself). A layer that captured their spans/events
+            // would re-export what its own exporting produced — an amplifying
+            // feedback loop — so hide them from the plugin layers.
+            ctx.telemetry.exclude_targets(&[
+                "h2",
+                "hyper",
+                "hyper_util",
+                "tower",
+                "tonic",
+                "reqwest",
+                "opentelemetry",
+                "opentelemetry_sdk",
+                "opentelemetry_otlp",
+            ]);
+
             #[cfg(feature = "tracing-bridge")]
             {
                 use opentelemetry::trace::TracerProvider as _;

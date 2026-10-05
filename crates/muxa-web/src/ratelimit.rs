@@ -21,6 +21,7 @@
 //! out of the box.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -119,11 +120,17 @@ pub fn per_ip_layer(cfg: &RateLimitConfig) -> Result<IpRateLimitLayer, Error> {
         .ok_or_else(|| Error::other("rate limit: invalid quota (zero burst or period)"))?;
 
     // Evict stale per-IP buckets periodically so the keyed limiter doesn't grow
-    // unbounded under a wide spread of client IPs.
-    let limiter = config.limiter().clone();
+    // unbounded under a wide spread of client IPs. The task only holds a weak
+    // handle: once the layer (and so the router) is dropped at shutdown, the
+    // limiter is gone and the task ends on its next tick instead of running
+    // for the life of the process.
+    let limiter = Arc::downgrade(config.limiter());
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(EVICT_INTERVAL).await;
+            let Some(limiter) = limiter.upgrade() else {
+                break;
+            };
             limiter.retain_recent();
         }
     });

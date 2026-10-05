@@ -44,9 +44,6 @@ http        = { workspace = true }
 bon         = { workspace = true }
 serde       = { workspace = true }
 tracing     = { workspace = true }
-# For the launch banner — extract the merged figment and pretty-print it.
-figment     = { workspace = true }
-toml        = { workspace = true }
 
 [lints]
 workspace = true

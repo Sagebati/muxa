@@ -34,6 +34,8 @@ use std::net::SocketAddr;
 
 use axum::Router;
 use bon::Builder;
+#[cfg(feature = "openapi")]
+use muxa_core::Sections;
 use muxa_core::{BoxFuture, BuildCtx, Error, Mount, Plugin, Result, ServeFn, ShutdownToken, State};
 use serde::Deserialize;
 
@@ -49,7 +51,7 @@ fn default_port() -> u16 {
 
 /// Configuration for [`WebPlugin`].
 ///
-/// Read from the `[web]` section of the figment.
+/// Read from the `[web]` configuration section.
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct WebConfig {
@@ -59,8 +61,8 @@ pub struct WebConfig {
     /// Bind port. Defaults to `3000`.
     #[builder(default = default_port())]
     pub port: u16,
-    /// Print a Rocket-style launch banner (bound URL, mount points,
-    /// merged config) to stderr at startup. Defaults to `true`.
+    /// Print a launch banner (bound URL, mount points) to stderr at
+    /// startup. Defaults to `true`.
     #[serde(default = "default_true")]
     #[builder(default = true)]
     pub banner: bool,
@@ -123,18 +125,14 @@ where
 /// Snapshot the banner data and register the serve loop on the build context.
 /// Shared by [`WebPlugin`] and the aide-aware [`ApiPlugin`].
 fn schedule_serve(cfg: WebConfig, ctx: &mut BuildCtx) -> Result<()> {
-    // Snapshot the figment and the registered mount points for the launch
-    // banner. The serve closure runs after `RouterRegistry` is consumed at
-    // `compose()` time, so we can't read it from there.
-    let banner_data = if cfg.banner {
-        Some((ctx.figment().clone(), ctx.router.mounts()))
-    } else {
-        None
-    };
+    // Snapshot the registered mount points for the launch banner. The serve
+    // closure runs after `RouterRegistry` is consumed at `compose()` time, so
+    // we can't read it from there.
+    let banner_mounts = cfg.banner.then(|| ctx.router.mounts());
 
     let shutdown = ctx.shutdown.clone();
     let serve_fn: ServeFn = Box::new(move |router: Router| -> BoxFuture<'static, Result<()>> {
-        Box::pin(serve_loop(router, cfg, banner_data, shutdown))
+        Box::pin(serve_loop(router, cfg, banner_mounts, shutdown))
     });
     ctx.set_serve_fn(serve_fn)
 }
@@ -147,7 +145,8 @@ fn schedule_serve(cfg: WebConfig, ctx: &mut BuildCtx) -> Result<()> {
 /// [`ApiPlugin::new`] — set `info.title`/`info.version` there), mounts the
 /// routes, and serves the spec + Scalar docs at the paths from the `[openapi]`
 /// config section. Owns the serve loop, so add it **last**, in place of
-/// `WebPlugin` + a separate `OpenApiPlugin`.
+/// `WebPlugin` + a separate `OpenApiPlugin` — the two are alternatives, never
+/// add both.
 ///
 /// ```ignore
 /// use muxa::prelude::*;
@@ -174,6 +173,18 @@ impl<R> ApiPlugin<R> {
     }
 }
 
+/// Configuration for [`ApiPlugin`]. It serves the app *and* its API docs, so
+/// its configuration is two sections: `[web]` and `[openapi]`.
+#[cfg(feature = "openapi")]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ApiConfig {
+    /// The `[web]` section: bind address, banner.
+    pub web: WebConfig,
+    /// The `[openapi]` section: where the spec and the docs are served.
+    pub openapi: muxa_openapi::OpenApiConfig,
+}
+
 #[cfg(feature = "openapi")]
 impl<S, R> Plugin<S> for ApiPlugin<R>
 where
@@ -181,29 +192,36 @@ where
     R: FnOnce(&S) -> aide::axum::ApiRouter + Send + 'static,
 {
     type Output = ();
-    type Config = WebConfig;
+    type Config = ApiConfig;
     const CONFIG_PREFIX: &'static str = "web";
 
-    async fn build(self, cfg: WebConfig, state: &S, ctx: &mut BuildCtx) -> Result<()> {
+    /// Two sections make up this plugin's config; an invalid value in either
+    /// fails the build.
+    fn read_config(sections: &Sections<'_>) -> Result<ApiConfig> {
+        Ok(ApiConfig {
+            web: sections.get("web")?,
+            openapi: sections.get("openapi")?,
+        })
+    }
+
+    async fn build(self, cfg: ApiConfig, state: &S, ctx: &mut BuildCtx) -> Result<()> {
         // Finish the aide router → axum Router, populating the OpenAPI document.
         let mut api = self.api;
         let router = (self.routes)(state).finish_api(&mut api);
         ctx.router.mount("/", router);
 
         // Serve the spec + Scalar docs (paths/title from the `[openapi]` table).
-        let oa_cfg: muxa_openapi::OpenApiConfig =
-            ctx.figment().extract_inner("openapi").unwrap_or_default();
         ctx.router
-            .mount("/", muxa_openapi::docs_router(&api, &oa_cfg)?);
+            .mount("/", muxa_openapi::docs_router(&api, &cfg.openapi)?);
 
-        schedule_serve(cfg, ctx)
+        schedule_serve(cfg.web, ctx)
     }
 }
 
 async fn serve_loop(
     router: Router,
     cfg: WebConfig,
-    banner_data: Option<(figment::Figment, Vec<(String, Mount)>)>,
+    banner_mounts: Option<Vec<(String, Mount)>>,
     shutdown: ShutdownToken,
 ) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
@@ -213,8 +231,8 @@ async fn serve_loop(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
 
-    if let Some((figment, mounts)) = banner_data {
-        banner::print(bound, &figment, &mounts);
+    if let Some(mounts) = banner_mounts {
+        banner::print(bound, &mounts);
     }
 
     tracing::info!(%bound, "muxa-web: serving");
