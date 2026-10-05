@@ -132,7 +132,7 @@ fn box_pgmq_err(err: pgmq::PgmqError) -> muxa_core::Error {
 mod sqlx_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_sqlx::SqlxBackend;
-    use pgmq::PGMQueueExt;
+    use pgmq::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<SqlxBackend, Idx>
     where
@@ -160,9 +160,14 @@ mod sqlx_impl {
                 .0
                 .acquire()
                 .await
-                .map_err(|e| Error::other(format!("sqlx acquire: {e}")))?;
-            for q in &queues {
-                conn.create(q).await.map_err(super::box_pgmq_err)?;
+                .map_err(|err| Error::other(format!("sqlx acquire: {err}")))?;
+            for queue in &queues {
+                // `Queue` is implemented for `&mut PgConnection`, not for the
+                // pooled-connection guard.
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())
@@ -174,7 +179,7 @@ mod sqlx_impl {
 mod diesel_async_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_diesel::DieselBackend;
-    use pgmq::Queue;
+    use pgmq::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<DieselBackend, Idx>
     where
@@ -202,11 +207,14 @@ mod diesel_async_impl {
                 .0
                 .get()
                 .await
-                .map_err(|e| Error::other(format!("diesel get: {e}")))?;
-            for q in &queues {
+                .map_err(|err| Error::other(format!("diesel get: {err}")))?;
+            for queue in &queues {
                 // `Queue` is implemented for `&mut AsyncPgConnection` and its
                 // methods take `self`, so reborrow per call.
-                (&mut *conn).create(q).await.map_err(super::box_pgmq_err)?;
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())

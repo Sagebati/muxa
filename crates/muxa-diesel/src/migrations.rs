@@ -13,7 +13,7 @@
 use diesel_async::AsyncConnection as _;
 use diesel_async::AsyncPgConnection;
 use diesel_async::async_connection_wrapper::AsyncConnectionWrapper;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness as _};
 use muxa_core::{Error, Result};
 
 /// Runs the application's embedded migrations against the database.
