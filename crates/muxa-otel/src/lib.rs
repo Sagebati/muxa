@@ -102,7 +102,12 @@ impl<S: State> Plugin<S> for OtelPlugin {
     type Config = OtelConfig;
     const CONFIG_PREFIX: &'static str = "otel";
 
-    async fn build(self, cfg: OtelConfig, _state: &S, ctx: &mut BuildCtx) -> Result<TelemetryHandles> {
+    async fn build(
+        self,
+        cfg: OtelConfig,
+        _state: &S,
+        ctx: &mut BuildCtx,
+    ) -> Result<TelemetryHandles> {
         // (1) HTTP request spans on the router.
         #[cfg(feature = "http-layer")]
         ctx.router
@@ -127,9 +132,12 @@ impl<S: State> Plugin<S> for OtelPlugin {
             #[cfg(feature = "tracing-bridge")]
             {
                 use opentelemetry::trace::TracerProvider as _;
-                let exporter =
-                    configured_exporter!(opentelemetry_otlp::SpanExporter::builder(), endpoint.as_str(), timeout)
-                        .map_err(muxa_core::Error::other)?;
+                let exporter = configured_exporter!(
+                    opentelemetry_otlp::SpanExporter::builder(),
+                    endpoint.as_str(),
+                    timeout
+                )
+                .map_err(muxa_core::Error::other)?;
                 let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                     .with_batch_exporter(exporter)
                     .with_resource(resource.clone())
@@ -146,9 +154,12 @@ impl<S: State> Plugin<S> for OtelPlugin {
 
             #[cfg(feature = "metrics")]
             {
-                let exporter =
-                    configured_exporter!(opentelemetry_otlp::MetricExporter::builder(), endpoint.as_str(), timeout)
-                        .map_err(muxa_core::Error::other)?;
+                let exporter = configured_exporter!(
+                    opentelemetry_otlp::MetricExporter::builder(),
+                    endpoint.as_str(),
+                    timeout
+                )
+                .map_err(muxa_core::Error::other)?;
                 let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
                     .with_interval(std::time::Duration::from_secs(cfg.metric_interval_secs))
                     .build();
@@ -164,16 +175,21 @@ impl<S: State> Plugin<S> for OtelPlugin {
 
             #[cfg(feature = "logs")]
             {
-                let exporter =
-                    configured_exporter!(opentelemetry_otlp::LogExporter::builder(), endpoint.as_str(), timeout)
-                        .map_err(muxa_core::Error::other)?;
+                let exporter = configured_exporter!(
+                    opentelemetry_otlp::LogExporter::builder(),
+                    endpoint.as_str(),
+                    timeout
+                )
+                .map_err(muxa_core::Error::other)?;
                 let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                     .with_batch_exporter(exporter)
                     .with_resource(resource.clone())
                     .build();
                 // Route `tracing` events → OTel logs via the shared subscriber.
                 ctx.telemetry.add_layer(
-                    opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(&provider),
+                    opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+                        &provider,
+                    ),
                 );
                 flushes.push(Box::new(move || {
                     let _ = provider.shutdown();
@@ -181,12 +197,13 @@ impl<S: State> Plugin<S> for OtelPlugin {
             }
 
             // Flush all providers on graceful shutdown so the batch tail isn't lost.
-            ctx.tasks.spawn("otel-shutdown", move |shutdown| async move {
-                shutdown.cancelled().await;
-                for flush in flushes {
-                    flush();
-                }
-            });
+            ctx.tasks
+                .spawn("otel-shutdown", move |shutdown| async move {
+                    shutdown.cancelled().await;
+                    for flush in flushes {
+                        flush();
+                    }
+                });
 
             tracing::info!(service = %cfg.service_name, %endpoint, "muxa-otel: OTLP export enabled");
             return Ok(TelemetryHandles {

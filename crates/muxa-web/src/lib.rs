@@ -193,7 +193,8 @@ where
         // Serve the spec + Scalar docs (paths/title from the `[openapi]` table).
         let oa_cfg: muxa_openapi::OpenApiConfig =
             ctx.figment().extract_inner("openapi").unwrap_or_default();
-        ctx.router.mount("/", muxa_openapi::docs_router(&api, &oa_cfg)?);
+        ctx.router
+            .mount("/", muxa_openapi::docs_router(&api, &oa_cfg)?);
 
         schedule_serve(cfg, ctx)
     }

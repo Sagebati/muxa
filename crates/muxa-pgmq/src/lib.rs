@@ -143,12 +143,7 @@ mod sqlx_impl {
         type Config = super::PgmqConfig;
         const CONFIG_PREFIX: &'static str = "pgmq";
 
-        async fn build(
-            self,
-            cfg: super::PgmqConfig,
-            state: &S,
-            _ctx: &mut BuildCtx,
-        ) -> Result<()> {
+        async fn build(self, cfg: super::PgmqConfig, state: &S, _ctx: &mut BuildCtx) -> Result<()> {
             let pool = state.pg_executor();
             let queues = super::merge_queues(self.queues, cfg.queues);
 
@@ -190,12 +185,7 @@ mod diesel_async_impl {
         type Config = super::PgmqConfig;
         const CONFIG_PREFIX: &'static str = "pgmq";
 
-        async fn build(
-            self,
-            cfg: super::PgmqConfig,
-            state: &S,
-            _ctx: &mut BuildCtx,
-        ) -> Result<()> {
+        async fn build(self, cfg: super::PgmqConfig, state: &S, _ctx: &mut BuildCtx) -> Result<()> {
             let pool = state.pg_executor();
             let queues = super::merge_queues(self.queues, cfg.queues);
 
