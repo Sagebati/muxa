@@ -1,6 +1,6 @@
 # diesel-sentry
 
-A [Diesel](https://diesel.rs) `Instrumentation` that turns connection, query and transaction events into `tracing` spans, tagged for both Sentry and OpenTelemetry.
+A [Diesel](https://diesel.rs) `Instrumentation` that turns connection and query events into `tracing` spans, tagged for both Sentry and OpenTelemetry. Transactions have no span of their own; query spans carry the transaction depth.
 
 It depends only on `diesel` and `tracing`. It lives in the [muxa](../muxa) workspace but does not depend on muxa, and works with any diesel or diesel-async setup.
 
@@ -44,7 +44,7 @@ The crate only creates spans. What happens to them depends on the `tracing` laye
 
 Details:
 
-- Bind values are stripped. `db.statement` carries only the parameterised SQL, so parameter values never reach your telemetry backend.
+- Bind values are stripped from `db.statement`, which carries only the parameterised SQL. Values can still reach your telemetry backend in two ways: literals written directly into the SQL text, and database error messages recorded in `error`, which may quote the offending value.
 - `error` is filled in when the query or connection fails.
 - `db.transaction.depth` is `0` outside a transaction.
 - `db.system` is always `"postgresql"`, whatever backend the connection uses.

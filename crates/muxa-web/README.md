@@ -42,14 +42,11 @@ where
     Router::new().route("/health", get(|| async { "ok" })).with_state(pool)
 }
 
-// 3. a router you already built
-fn with_router<S>(router: Router) -> impl FnOnce(&S) -> Router + Send + 'static {
-    move |_state: &S| router
-}
-// … .with_plugin(WebPlugin::new(with_router(router)))
+// 3. a closure, for a router you already built: annotate the parameter
+// … .with_plugin(WebPlugin::new(move |_state: &_| router))
 ```
 
-A bare closure, `WebPlugin::new(move |_state| router)`, does not compile: the closure is inferred for one lifetime and the plugin needs it for all of them (`FnOnce` is not general enough). The helper in form 3 fixes that through its return type.
+The `&_` in form 3 is required. `WebPlugin::new(move |_state| router)` does not compile: the closure is inferred for one lifetime and the plugin needs it for all of them (`FnOnce` is not general enough).
 
 `muxa_web::no_routes` is a ready-made callback for an app whose routes all come from plugins.
 
@@ -67,7 +64,7 @@ The banner shows the bound URL and the mounted route prefixes. It does not print
 
 ### Shutdown and peer address
 
-With the `graceful-shutdown` feature (default), ctrl-c cancels the app's `ShutdownToken`. The server stops accepting connections and background tasks see the cancellation. Anything else holding the token can trigger the same shutdown.
+With the `graceful-shutdown` feature (default), ctrl-c cancels the app's `ShutdownToken`. The server stops accepting connections and background tasks see the cancellation. Anything else holding the token can trigger the same shutdown. SIGTERM is not handled: a process stopped that way exits at once.
 
 The server is started with `into_make_service_with_connect_info::<SocketAddr>()`, so handlers and layers can extract `ConnectInfo<SocketAddr>`.
 
@@ -124,21 +121,18 @@ With the `ratelimit` feature, `ratelimit::per_ip_layer` builds a per-client-IP t
 ```rust
 let app = App::default().with_plugin(OtelPlugin).await?;
 
-let cfg: RateLimitConfig = app
-    .figment()
-    .extract_inner("ratelimit")
-    .unwrap_or_default();
+let cfg: RateLimitConfig = app.figment().focus("ratelimit").extract()?;
 
 let mut submit = Router::new().route("/submit", post(|| async { "queued" }));
 if cfg.enabled {
     submit = submit.layer(per_ip_layer(&cfg)?);
 }
 
-app.with_plugin(WebPlugin::new(with_router(submit))).await?
+app.with_plugin(WebPlugin::new(move |_state: &_| submit)).await?
     .run().await
 ```
 
-No plugin reads the rate-limit config. You deserialize `RateLimitConfig` from whichever section you like and decide where the layer goes.
+No plugin reads the rate-limit config. You deserialize `RateLimitConfig` from whichever section you like and decide where the layer goes. Read this way, a missing section gives the defaults and an invalid value fails startup.
 
 | Key | Default | |
 |---|---|---|
