@@ -1,7 +1,7 @@
 //! SQLite-driver SQLx plugin: `SqlitePlugin` + `SqlitePool`.
 //!
 //! Unlike the Postgres driver, SQLite has no pgmq backend impl — pgmq is
-//! Postgres-only — so this module doesn't ship a `PgmqBackend` marker.
+//! Postgres-only — so this module doesn't ship a `PgBackend` marker.
 
 use std::ops::Deref;
 use std::str::FromStr as _;

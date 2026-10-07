@@ -40,7 +40,7 @@ App::with_config_file("muxa.toml")
 ```
 
 There is **no `dyn Plugin` and no runtime registry** — composition is entirely compile-time. The key type is `AppBuilder<S>` where `S` is a **heterogeneous list (HList)** of plugin outputs (`muxa-core/src/state.rs`). Each `with_plugin` call:
-1. reads the plugin's config slice from the figment,
+1. reads the plugin's config section (`Plugin::read_config`, which only sees named sections — never the whole configuration),
 2. calls `Plugin::build(cfg, &state, &mut ctx)`,
 3. pushes the plugin's `Output` onto the HList, growing `S` by one type.
 
@@ -48,19 +48,21 @@ There is **no `dyn Plugin` and no runtime registry** — composition is entirely
 
 ### Capability traits — cross-plugin wiring
 
-A plugin requires a resource from an earlier plugin by adding a **capability trait bound on `S`** in its `impl Plugin<S>`. The canonical example is `HasPgExecutorFor<B, Idx>` (`muxa-core/src/capability.rs`): a single blanket impl says "any state HList containing `B::Pool` satisfies this capability." Pool crates (`muxa-sqlx`, `muxa-diesel`) each define a zero-size `PgmqBackend` marker (`SqlxBackend`, `DieselBackend`) naming their pool type; the consumer (`muxa-pgmq`) is generic as `PgmqPlugin<B, Idx>`. The `Idx` phantom exists only to satisfy Rust's unconstrained-type-param rule (E0207) and is normally inferred / defaulted to `Here` when the consumer immediately follows its provider in the chain.
+A plugin requires a resource from an earlier plugin by adding a **capability trait bound on `S`** in its `impl Plugin<S>`. The canonical example is `HasPgExecutorFor<B, Idx>` (`muxa-core/src/capability.rs`): a single blanket impl says "any state HList containing `B::Pool` satisfies this capability." Pool crates (`muxa-sqlx`, `muxa-diesel`) each define a zero-size `PgBackend` marker (`SqlxBackend`, `DieselBackend`) naming their pool type; the consumer (`muxa-pgmq`) is generic as `PgmqPlugin<B, Idx>`. The `Idx` phantom exists only to satisfy Rust's unconstrained-type-param rule (E0207) and is normally inferred / defaulted to `Here` when the consumer immediately follows its provider in the chain.
 
-This pattern is how you add a plugin that consumes another's resource without orphan-rule trouble: define the backend marker in the provider crate, keep the blanket capability impl in `muxa-core`.
+This pattern is how you add a plugin that consumes another's resource without orphan-rule trouble: define the backend marker in the provider crate, keep the blanket capability impl in `muxa-core`. Capabilities in core are named after the **resource**, never after a consumer — core knows no integration.
 
 ### BuildCtx — the build-time side channels
 
 `Plugin::build` also gets `&mut BuildCtx` (`muxa-core/src/ctx.rs`), the mutable channel separate from the (immutable, type-growing) state HList. Plugins use it to:
-- `ctx.router.mount(prefix, router)` / `mount_manual(...)` / `layer(...)` — contribute routes and middleware.
+- `ctx.router.mount(prefix, router)` / `mount_manual(...)` / `layer(...)` — contribute routes and middleware. Layers are applied in registration order, each wrapping the previous ones, so the **last** registered is outermost: middleware order follows plugin order.
 - `ctx.tasks.spawn(name, |shutdown| async {...})` — register background tasks (these *must* be `Send + 'static`; they're spawned at `run()`).
-- `ctx.telemetry` — push tracing-subscriber layers (otel/sentry attach via a reload handle, installed once).
+- `ctx.telemetry` — `add_layer(...)` pushes a tracing-subscriber layer onto the one process-wide slot (one layer per type; a second app in the same process shares the slot). A plugin whose layer exports over the network calls `exclude_targets(...)` with the crates on its export path. `muxa-telemetry` knows none of its users.
 - `ctx.set_serve_fn(...)` — exactly one plugin (the web plugin) fills this slot.
 
-At `App::run`: background tasks are spawned, the router is `compose()`d (auto-mounts merged/nested by prefix, then layers applied), and the single `serve_fn` is invoked with the final router.
+The configuration is **not** in `BuildCtx`: a plugin gets its own section as `build`'s `cfg` argument and nothing else. Only the application reads the whole configuration, via `AppBuilder::figment()`.
+
+At `App::run`: background tasks are spawned, the router is `compose()`d (auto-mounts merged/nested by prefix, then layers applied), and the single `serve_fn` is invoked with the final router. When it returns, the shutdown token is cancelled and `run` waits up to ten seconds for the tasks to return — so a task can flush or drain on shutdown.
 
 ### Why WebPlugin is added last
 
@@ -78,7 +80,7 @@ figment-based (`muxa-core/src/config.rs`). Layered, last wins:
 
 The `MUXA_` env prefix is the default (`DEFAULT_ENV_PREFIX`) but is **configurable** so a consumer app can namespace its own env vars: `App::with_env_prefix("MYAPP_")` or `App::with_config_file_and_env_prefix(path, "MYAPP_")` (and the free fns `load_figment_with_prefix` / `load_figment_from_with_prefix`). A custom prefix also renames the bootstrap config-path var to `{prefix}CONFIG`. The prefix includes its trailing separator.
 
-Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`. Use `""` for "no config". Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` so Debug/logs redact them.
+Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`, a present-but-invalid one is an error. Use `""` for "no config". A plugin made of several sections overrides `read_config` and reads each with `Sections::get` (see `ApiPlugin`: `[web]` + `[openapi]`); that is the only place plugin code touches configuration, and it can't see more than the sections it names. Don't print raw configuration anywhere — values are plain strings there. Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` in the typed `Config` so Debug/logs redact them.
 
 ## Workspace / feature conventions
 
@@ -90,7 +92,7 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 ## Crate map
 
 - `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors. No integrations.
-- `muxa-telemetry` — `TelemetryRegistry` (subscriber layer kernel, reload handle).
+- `muxa-telemetry` — `TelemetryRegistry` (the global subscriber and its process-wide plugin-layer slot). Depends on no integration.
 - `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`).
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.

@@ -21,9 +21,14 @@ pub type ServeFn = Box<dyn FnOnce(axum::Router) -> BoxFuture<'static, Result<()>
 pub type BoxTask = Box<dyn FnOnce(ShutdownToken) -> BoxFuture<'static, ()> + Send + 'static>;
 
 /// Per-application build context — passed to every plugin's `build()`. Holds
-/// the figment (read-only after `App::default()`), the router and task registries,
-/// the shutdown token, the telemetry kernel, and a slot for the web plugin's
-/// serve closure.
+/// the router and task registries, the shutdown token, the telemetry kernel,
+/// the run mode, and a slot for the serving plugin's serve closure.
+///
+/// The configuration is deliberately **not** reachable from here: a plugin
+/// gets its own section as the `cfg` argument of `build` (see
+/// [`Plugin::read_config`](crate::Plugin::read_config)), and only the
+/// application reads the whole thing, via
+/// [`AppBuilder::figment`](crate::AppBuilder::figment).
 pub struct BuildCtx {
     figment: figment::Figment,
     /// Coarse run mode (development vs production), resolved once from the
@@ -57,8 +62,8 @@ impl BuildCtx {
         }
     }
 
-    /// Borrow the configured figment.
-    pub fn figment(&self) -> &figment::Figment {
+    /// The merged configuration. Crate-private on purpose — see the type docs.
+    pub(crate) fn figment(&self) -> &figment::Figment {
         &self.figment
     }
 
@@ -121,7 +126,12 @@ impl RouterRegistry {
     }
 
     /// Register a middleware/layer that wraps the final composed router.
-    /// Pushed-in-order; outermost layer first.
+    ///
+    /// Layers are applied in registration order, each one wrapping everything
+    /// registered before it. So the **last** registered layer is the outermost:
+    /// it sees a request first and the response last. Since plugins register
+    /// during `build`, middleware order follows plugin order — a plugin added
+    /// later in the chain wraps the ones added earlier.
     pub fn layer<F>(&mut self, func: F)
     where
         F: FnOnce(axum::Router) -> axum::Router + Send + 'static,
@@ -156,7 +166,8 @@ impl RouterRegistry {
     }
 
     /// Compose all `Auto`-mounted routers, then apply middleware in
-    /// registration order.
+    /// registration order (see [`layer`](Self::layer): last registered is
+    /// outermost).
     pub fn compose(self) -> axum::Router {
         let mut out = axum::Router::new();
         for entry in self.routes {
@@ -176,7 +187,9 @@ impl RouterRegistry {
 }
 
 /// Registry of background tasks; drained at [`crate::App::run`] into
-/// `tokio::spawn` calls.
+/// `tokio::spawn` calls. Each task gets a [`ShutdownToken`]; once serving ends
+/// the token is cancelled and `run` waits (for a bounded time) for the tasks
+/// to return, so a task can use it to flush or drain before the process exits.
 #[derive(Default)]
 pub struct TaskRegistry {
     tasks: Vec<(&'static str, BoxTask)>,
@@ -196,5 +209,53 @@ impl TaskRegistry {
     /// Drain all scheduled tasks for spawning.
     pub fn drain(&mut self) -> Vec<(&'static str, BoxTask)> {
         std::mem::take(&mut self.tasks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::Request;
+    use axum::middleware::{self, Next};
+    use tower::ServiceExt as _;
+
+    use super::*;
+
+    /// A layer that records `name` when a request passes through it.
+    fn recording(
+        name: &'static str,
+        seen: &Arc<Mutex<Vec<&'static str>>>,
+    ) -> impl FnOnce(axum::Router) -> axum::Router + Send + 'static {
+        let seen = Arc::clone(seen);
+        move |router| {
+            router.layer(middleware::from_fn(move |request: Request, next: Next| {
+                let seen = Arc::clone(&seen);
+                async move {
+                    seen.lock().unwrap().push(name);
+                    next.run(request).await
+                }
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn last_registered_layer_is_outermost() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = RouterRegistry::default();
+        registry.mount(
+            "/",
+            axum::Router::new().route("/", axum::routing::get(|| async { "ok" })),
+        );
+        registry.layer(recording("first", &seen));
+        registry.layer(recording("second", &seen));
+
+        let request = http::Request::get("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        registry.compose().oneshot(request).await.unwrap();
+
+        // The request meets the last-registered layer first.
+        assert_eq!(*seen.lock().unwrap(), ["second", "first"]);
     }
 }

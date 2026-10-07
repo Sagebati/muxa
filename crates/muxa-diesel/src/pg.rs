@@ -7,7 +7,7 @@ use diesel_async::AsyncPgConnection;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
 use dupe::Dupe;
-use muxa_core::{BuildCtx, Error, PgmqBackend, PgmqPool, Plugin, Result, State};
+use muxa_core::{BuildCtx, Error, PgBackend, Plugin, Result, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
@@ -32,12 +32,10 @@ impl From<Pool<AsyncPgConnection>> for DieselPool {
 // refcount bump.
 impl Dupe for DieselPool {}
 
-impl PgmqPool for DieselPool {}
-
 /// Backend marker for the async Diesel Postgres pool.
 pub struct DieselBackend;
 
-impl PgmqBackend for DieselBackend {
+impl PgBackend for DieselBackend {
     type Pool = DieselPool;
 }
 // `HasPgExecutorFor<DieselBackend, _>` is supplied by the blanket impl in
@@ -147,7 +145,8 @@ impl<S: State> Plugin<S> for DieselPlugin {
             "muxa-diesel[pg]: connecting"
         );
 
-        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
+        let manager =
+            AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
         let pool = Pool::builder(manager)
             .max_size(cfg.max_connections as usize)
             .build()
@@ -172,7 +171,10 @@ mod tests {
         };
         let rendered = format!("{cfg:?}");
         assert!(!rendered.contains("hunter2"), "secret leaked: {rendered}");
-        assert!(!rendered.contains("postgres://"), "secret leaked: {rendered}");
+        assert!(
+            !rendered.contains("postgres://"),
+            "secret leaked: {rendered}"
+        );
         // Non-secret fields still render — only the secret is hidden.
         assert!(rendered.contains("max_connections"));
     }

@@ -33,9 +33,9 @@ pub mod plugin;
 pub mod state;
 
 pub use app::{App, AppBuilder};
-pub use capability::{HasPgExecutorFor, PgmqBackend, PgmqPool};
+pub use capability::{HasPgExecutorFor, PgBackend};
 pub use config::{
-    DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, load_figment, load_figment_from,
+    DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, load_figment, load_figment_from,
     load_figment_from_with_prefix, load_figment_with_prefix,
 };
 pub use ctx::{
@@ -51,7 +51,7 @@ pub use state::{HCons, HNil, Here, Selector, State, There};
 /// Common imports for application and plugin code.
 pub mod prelude {
     pub use crate::{
-        App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgmqBackend, PgmqPool, Plugin,
-        Result, RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
+        App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgBackend, Plugin, Result,
+        RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
     };
 }

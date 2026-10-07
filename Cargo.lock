@@ -2317,7 +2317,6 @@ dependencies = [
  "axum",
  "bon",
  "muxa-core",
- "muxa-telemetry",
  "secrecy",
  "sentry",
  "sentry-tower",
@@ -2334,6 +2333,7 @@ dependencies = [
  "bon",
  "dupe",
  "muxa-core",
+ "secrecy",
  "serde",
  "sqlx",
  "tracing",
@@ -2343,7 +2343,6 @@ dependencies = [
 name = "muxa-telemetry"
 version = "0.1.0"
 dependencies = [
- "sentry-tracing",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2355,7 +2354,6 @@ dependencies = [
  "aide",
  "axum",
  "bon",
- "figment",
  "futures",
  "governor",
  "http 1.4.0",
@@ -2364,7 +2362,6 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-util",
- "toml 0.8.23",
  "tower",
  "tower_governor",
  "tracing",

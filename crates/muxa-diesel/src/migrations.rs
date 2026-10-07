@@ -13,7 +13,7 @@
 use diesel_async::AsyncConnection as _;
 use diesel_async::AsyncPgConnection;
 use diesel_async::async_connection_wrapper::AsyncConnectionWrapper;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness as _};
 use muxa_core::{Error, Result};
 
 /// Runs the application's embedded migrations against the database.
@@ -54,7 +54,8 @@ impl MigrationsRunner {
         // implements `AsyncConnection`, so the bare method call is ambiguous.
         tokio::task::spawn_blocking(move || {
             diesel::Connection::transaction(&mut wrapper, |conn| {
-                conn.run_pending_migrations(migrations).map(|versions| versions.len())
+                conn.run_pending_migrations(migrations)
+                    .map(|versions| versions.len())
             })
         })
         .await
