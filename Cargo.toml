@@ -91,25 +91,26 @@ governor = "0.10"
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),
 # `tls-*`, and column-type adapters are opted in via `muxa-sqlx`'s own Cargo
 # features (and unioned across the dep graph by cargo).
-sqlx         = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+sqlx         = { version = "0.9", default-features = false, features = ["runtime-tokio"] }
 diesel       = { version = "2", default-features = false }
-# diesel-async pinned to 0.9 to match the pgmq fork's diesel-async dep. Bump
-# in lockstep when the fork upgrades. Native-async only — diesel-async
-# supports Postgres and MySQL but not SQLite, so muxa-diesel is
+# diesel-async 0.9 — must stay on the same line pgmq builds its diesel-async
+# `Queue` impl against (0.9.0 today); bump the two together. Native-async only —
+# diesel-async supports Postgres and MySQL but not SQLite, so muxa-diesel is
 # Postgres/MySQL only.
 diesel-async = { version = "0.9", default-features = false, features = ["deadpool"] }
 # Sync migration harness; muxa-diesel runs it over diesel-async's
 # AsyncConnectionWrapper. Tracks diesel's 2.x line.
 diesel_migrations = { version = "2", default-features = false }
 
-# Postgres message queue — Sagebati fork that abstracts over driver pools via
-# Cargo features (sqlx, tokio-postgres, diesel-async, diesel-sync) instead of
-# hard-coding sqlx like upstream.
-# Pinned to a known-good commit: branch `main` has drifted to require
-# diesel-async ^0.5 (conflicts with muxa-diesel's ^0.9). This rev (0.34.0-alpha)
-# tracks diesel-async 0.9 — the same commit goban-analyser/katago-ws uses — so
-# the muxa workspace builds & lints standalone. Bump in lockstep with the fork.
-pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "e243a26a60a0c3a43eefca2051156556715e875e", default-features = false }
+# Postgres message queue. Upstream pgmq (0.34.0-alpha.7; sqlx 0.9, diesel-async
+# 0.9) has the diesel-async `Queue` impl, but its SQL-only installer is still
+# hard-wired to `sqlx::Pool<Postgres>` and `install-sql` drags sqlx in. The
+# `install-only` branch of the Sagebati fork is upstream `main` plus one scoped
+# patch: `pgmq::install::diesel_async::*` (installer over a borrowed
+# `AsyncPgConnection`) and `install-sql` without the implied `sqlx`. Nothing
+# else differs. To bump: rebase that branch onto upstream, update `rev` here
+# and in goban-analyser/katago-ws (which pins the same rev).
+pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "1ad05960c924c26a3c5d2269017ac10164482404", default-features = false }
 
 # Config
 figment     = { version = "0.10", features = ["toml", "env"] }
