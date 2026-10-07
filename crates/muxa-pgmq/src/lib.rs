@@ -1,4 +1,4 @@
-//! muxa-pgmq — `PgmqPlugin<B, Idx>` generic over a `PgmqBackend`, backed by
+//! muxa-pgmq — `PgmqPlugin<B, Idx>` generic over a `PgBackend`, backed by
 //! the [Sagebati/pgmq](https://github.com/Sagebati/pgmq) fork that abstracts
 //! over driver pools through Cargo features.
 //!
@@ -55,7 +55,7 @@
 
 use std::marker::PhantomData;
 
-use muxa_core::{Here, PgmqBackend};
+use muxa_core::{Here, PgBackend};
 use serde::Deserialize;
 
 /// Configuration for [`PgmqPlugin`]. Read from `[pgmq]`.
@@ -76,12 +76,12 @@ pub struct PgmqConfig {
 ///
 /// The actual `Plugin` impls live in feature-gated submodules — one per
 /// supported backend.
-pub struct PgmqPlugin<B: PgmqBackend, Idx = Here> {
+pub struct PgmqPlugin<B: PgBackend, Idx = Here> {
     queues: Vec<String>,
     _phantom: PhantomData<fn() -> (B, Idx)>,
 }
 
-impl<B: PgmqBackend, Idx> PgmqPlugin<B, Idx> {
+impl<B: PgBackend, Idx> PgmqPlugin<B, Idx> {
     /// Construct a plugin with no preconfigured queues.
     pub fn new() -> Self {
         Self {
@@ -102,7 +102,7 @@ impl<B: PgmqBackend, Idx> PgmqPlugin<B, Idx> {
     }
 }
 
-impl<B: PgmqBackend, Idx> Default for PgmqPlugin<B, Idx> {
+impl<B: PgBackend, Idx> Default for PgmqPlugin<B, Idx> {
     fn default() -> Self {
         Self::new()
     }
@@ -132,7 +132,7 @@ fn box_pgmq_err(err: pgmq::PgmqError) -> muxa_core::Error {
 mod sqlx_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_sqlx::SqlxBackend;
-    use pgmq::PGMQueueExt;
+    use pgmq::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<SqlxBackend, Idx>
     where
@@ -143,12 +143,7 @@ mod sqlx_impl {
         type Config = super::PgmqConfig;
         const CONFIG_PREFIX: &'static str = "pgmq";
 
-        async fn build(
-            self,
-            cfg: super::PgmqConfig,
-            state: &S,
-            _ctx: &mut BuildCtx,
-        ) -> Result<()> {
+        async fn build(self, cfg: super::PgmqConfig, state: &S, _ctx: &mut BuildCtx) -> Result<()> {
             let pool = state.pg_executor();
             let queues = super::merge_queues(self.queues, cfg.queues);
 
@@ -165,9 +160,14 @@ mod sqlx_impl {
                 .0
                 .acquire()
                 .await
-                .map_err(|e| Error::other(format!("sqlx acquire: {e}")))?;
-            for q in &queues {
-                conn.create(q).await.map_err(super::box_pgmq_err)?;
+                .map_err(|err| Error::other(format!("sqlx acquire: {err}")))?;
+            for queue in &queues {
+                // `Queue` is implemented for `&mut PgConnection`, not for the
+                // pooled-connection guard.
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())
@@ -179,7 +179,7 @@ mod sqlx_impl {
 mod diesel_async_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_diesel::DieselBackend;
-    use pgmq::Queue;
+    use pgmq::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<DieselBackend, Idx>
     where
@@ -190,12 +190,7 @@ mod diesel_async_impl {
         type Config = super::PgmqConfig;
         const CONFIG_PREFIX: &'static str = "pgmq";
 
-        async fn build(
-            self,
-            cfg: super::PgmqConfig,
-            state: &S,
-            _ctx: &mut BuildCtx,
-        ) -> Result<()> {
+        async fn build(self, cfg: super::PgmqConfig, state: &S, _ctx: &mut BuildCtx) -> Result<()> {
             let pool = state.pg_executor();
             let queues = super::merge_queues(self.queues, cfg.queues);
 
@@ -212,11 +207,14 @@ mod diesel_async_impl {
                 .0
                 .get()
                 .await
-                .map_err(|e| Error::other(format!("diesel get: {e}")))?;
-            for q in &queues {
+                .map_err(|err| Error::other(format!("diesel get: {err}")))?;
+            for queue in &queues {
                 // `Queue` is implemented for `&mut AsyncPgConnection` and its
                 // methods take `self`, so reborrow per call.
-                (&mut *conn).create(q).await.map_err(super::box_pgmq_err)?;
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())

@@ -9,7 +9,7 @@
 //!    capture + optional transactions for performance monitoring) on the
 //!    router.
 //! 3. **With the `tracing-bridge` feature**: push `sentry-tracing::layer()`
-//!    onto the shared `muxa-telemetry` subscriber so `tracing` events and
+//!    onto the shared tracing subscriber so `tracing` events and
 //!    spans flow into Sentry as breadcrumbs / events / transactions.
 //!
 //! Database traces, metrics, and logs that arrive through `tracing`
@@ -192,8 +192,10 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
         // Tower middleware. Axum applies the last-added layer outermost,
         // so order matters: `SentryHttpLayer` first (inner) and
-        // `NewSentryLayer` second (outermost — scopes the request before
-        // any other middleware runs).
+        // `NewSentryLayer` second (outer — the request gets its Sentry scope
+        // before `SentryHttpLayer` runs). Relative to *other* plugins'
+        // middleware the position follows plugin order: a plugin added after
+        // this one wraps it.
         let http_transactions = cfg.http_transactions;
         ctx.router.layer(move |router| {
             let http_layer = if http_transactions {
@@ -206,14 +208,18 @@ impl<S: State> Plugin<S> for SentryPlugin {
                 .layer(NewSentryLayer::<axum::extract::Request>::new_from_top())
         });
 
-        // tracing→Sentry bridge: fill the typed sentry slot on the
-        // shared subscriber that muxa-telemetry installed. No subscriber
-        // init here — a single shared subscriber is the whole point of
-        // muxa-telemetry, and the slot is reserved at install time by
-        // the `muxa-telemetry/sentry` feature (auto-enabled via feature
-        // linking from this crate's `tracing-bridge` feature).
+        // tracing→Sentry bridge: attach the layer to the shared subscriber.
+        // No subscriber init here — there is one subscriber per process and
+        // `ctx.telemetry` is the way onto it.
         #[cfg(feature = "tracing-bridge")]
-        ctx.telemetry.set_sentry_layer(sentry_tracing::layer());
+        {
+            // Sentry ships events over reqwest (→ hyper → h2, through tower).
+            // Keep what that transport logs away from the bridge, or it would
+            // report its own reporting.
+            ctx.telemetry
+                .exclude_targets(&["h2", "hyper", "reqwest", "tower"]);
+            ctx.telemetry.add_layer(sentry_tracing::layer());
+        }
 
         if raw_dsn.is_some() {
             tracing::info!(

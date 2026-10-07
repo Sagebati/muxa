@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use figment::Figment;
 use figment::providers::{Env, Format as _, Toml};
+use serde::de::DeserializeOwned;
+
+use crate::error::Result;
 
 /// Default config-file path: `muxa.toml` in the current directory.
 pub const DEFAULT_CONFIG_PATH: &str = "muxa.toml";
@@ -70,6 +73,44 @@ pub fn load_figment_from_with_prefix<P: Into<PathBuf>>(path: P, prefix: &str) ->
         .merge(Env::prefixed(prefix).split("__").ignore(&["config"]))
 }
 
+/// A plugin's view of the application configuration: named sections, read one
+/// at a time into a type.
+///
+/// Plugins never hold the merged configuration itself, so they can't clone it,
+/// print it or walk other plugins' keys. [`Plugin::read_config`](crate::Plugin::read_config)
+/// receives a `Sections` and reads the section (or sections) the plugin's
+/// `Config` type is made of. The application, which owns the configuration,
+/// reaches all of it through [`AppBuilder::figment`](crate::AppBuilder::figment).
+pub struct Sections<'figment> {
+    figment: &'figment Figment,
+}
+
+impl<'figment> Sections<'figment> {
+    pub(crate) fn new(figment: &'figment Figment) -> Self {
+        Self { figment }
+    }
+
+    /// Deserialize the section at `prefix` (e.g. `"pgmq"` for the `[pgmq]`
+    /// table and `MUXA_PGMQ__*` env vars).
+    ///
+    /// * `prefix` is `""` — "no configuration": returns `T::default()`.
+    /// * The section is absent — returns `T::default()`.
+    /// * The section is present but doesn't deserialize — returns the error,
+    ///   so a typo in a value fails the build instead of becoming a default.
+    pub fn get<T>(&self, prefix: &str) -> Result<T>
+    where
+        T: DeserializeOwned + Default,
+    {
+        if prefix.is_empty() {
+            return Ok(T::default());
+        }
+        match self.figment.find_value(prefix) {
+            Ok(_) => self.figment.extract_inner(prefix).map_err(Into::into),
+            Err(_) => Ok(T::default()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +134,34 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[derive(serde::Deserialize, Default, Debug, PartialEq, Eq)]
+    struct Limits {
+        #[serde(default)]
+        max: u32,
+    }
+
+    #[test]
+    fn section_absent_or_unnamed_falls_back_to_default() {
+        let fig = Figment::new().merge(Toml::string("[other]\nmax = 9\n"));
+        let sections = Sections::new(&fig);
+        assert_eq!(sections.get::<Limits>("limits").unwrap(), Limits::default());
+        assert_eq!(sections.get::<Limits>("").unwrap(), Limits::default());
+    }
+
+    #[test]
+    fn section_present_is_read() {
+        let fig = Figment::new().merge(Toml::string("[limits]\nmax = 7\n"));
+        assert_eq!(
+            Sections::new(&fig).get::<Limits>("limits").unwrap(),
+            Limits { max: 7 }
+        );
+    }
+
+    #[test]
+    fn section_present_but_invalid_is_an_error() {
+        let fig = Figment::new().merge(Toml::string("[limits]\nmax = \"many\"\n"));
+        assert!(Sections::new(&fig).get::<Limits>("limits").is_err());
     }
 }

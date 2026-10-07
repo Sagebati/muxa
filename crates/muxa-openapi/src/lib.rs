@@ -29,11 +29,11 @@
 #![warn(missing_docs)]
 
 use aide::openapi::OpenApi;
+use axum::Router;
 use axum::body::Bytes;
 use axum::http::header;
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use muxa_core::{BuildCtx, Error, Plugin, Result, State};
 use serde::Deserialize;
 

@@ -2,7 +2,7 @@
 //!
 //! A plugin is a unit of work that:
 //!
-//! 1. Reads its own configuration slice from a `figment::Figment`.
+//! 1. Reads its own configuration section (see [`crate::Sections`]).
 //! 2. Optionally consumes capabilities from prior plugins (via trait bounds
 //!    on `S`).
 //! 3. Produces a single resource of type `Self::Output` that becomes part of
@@ -16,7 +16,7 @@
 
 use core::future::Future;
 
-use crate::{BuildCtx, Result, State};
+use crate::{BuildCtx, Result, Sections, State};
 
 /// A muxa plugin.
 ///
@@ -32,18 +32,17 @@ pub trait Plugin<S: State>: Sized + Send + 'static {
     /// The deserialized config slice this plugin reads.
     ///
     /// `Default` is required so the framework can fall back to default
-    /// values when the corresponding section is absent from the figment.
+    /// values when the corresponding section is absent from the configuration.
     /// Use `#[serde(default = "...")]` per field for meaningful defaults.
     type Config: serde::de::DeserializeOwned + Default + Send + 'static;
 
-    /// figment key path this plugin reads its config from.
+    /// Name of the configuration section this plugin reads.
     ///
     /// E.g. `const CONFIG_PREFIX: &'static str = "pgmq";` reads the `[pgmq]`
     /// table from TOML and `MUXA_PGMQ__*` env vars.
     ///
     /// Use the empty string `""` for "this plugin has no configuration" —
-    /// the default `read_config` will return `Self::Config::default()`
-    /// without touching the figment.
+    /// the default `read_config` will return `Self::Config::default()`.
     const CONFIG_PREFIX: &'static str;
 
     /// Build the plugin: produce its resource and (optionally) register
@@ -67,24 +66,19 @@ pub trait Plugin<S: State>: Sized + Send + 'static {
         ctx: &mut BuildCtx,
     ) -> impl Future<Output = Result<Self::Output>>;
 
-    /// Read this plugin's config from the figment.
+    /// Read this plugin's config.
     ///
-    /// Default implementation:
-    /// * If `CONFIG_PREFIX` is `""`, return `Self::Config::default()`
-    ///   without touching the figment.
-    /// * If `CONFIG_PREFIX` is present in the figment, extract that sub-tree.
-    /// * Otherwise return `Self::Config::default()`.
+    /// `sections` gives access to the configuration by named section only —
+    /// a plugin never sees the merged configuration as a whole.
     ///
-    /// Override if you need custom precedence or validation.
-    fn read_config(figment: &figment::Figment) -> Result<Self::Config> {
-        if Self::CONFIG_PREFIX.is_empty() {
-            return Ok(Self::Config::default());
-        }
-        match figment.find_value(Self::CONFIG_PREFIX) {
-            Ok(_) => figment
-                .extract_inner(Self::CONFIG_PREFIX)
-                .map_err(Into::into),
-            Err(_) => Ok(Self::Config::default()),
-        }
+    /// Default implementation: read the section at `CONFIG_PREFIX` (see
+    /// [`Sections::get`] for the absent / empty-prefix / invalid rules).
+    ///
+    /// Override when `Config` is made of more than one section — read each
+    /// one with [`Sections::get`] and assemble them — or to add validation.
+    /// This is the only place a plugin reads configuration; `build` gets the
+    /// resulting `Config` and nothing else.
+    fn read_config(sections: &Sections<'_>) -> Result<Self::Config> {
+        sections.get(Self::CONFIG_PREFIX)
     }
 }

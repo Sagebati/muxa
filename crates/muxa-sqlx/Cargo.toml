@@ -56,6 +56,8 @@ dupe        = { workspace = true }
 sqlx        = { workspace = true }
 bon         = { workspace = true }
 serde       = { workspace = true }
+# Wraps the connection URL so `Debug`/logs redact it.
+secrecy     = { workspace = true }
 tracing     = { workspace = true }
 
 [lints]
