@@ -56,7 +56,6 @@ diesel-network      = ["muxa-diesel?/network"]
 
 # PGMQ.
 pgmq                = ["dep:muxa-pgmq"]
-pgmq-tracing-spans  = ["muxa-pgmq?/tracing-spans"]
 
 # OpenTelemetry / observability.
 otel                = ["dep:muxa-otel"]

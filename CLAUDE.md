@@ -86,7 +86,7 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 
 - The `muxa` facade (`crates/muxa/Cargo.toml`) gates every integration behind a top-level feature and forwards the integration's own features. It uses `dep:` to gate optional deps and `muxa-pgmq?/sqlx`-style optional-activation so enabling a sub-feature without its parent is a no-op rather than a build error. `default = ["web", "otel"]`; `full` is the everything bundle.
 - Internal `workspace.dependencies` use `default-features = false` so the facade controls which features cascade.
-- Several third-party pins are deliberate and load-bearing — read the comments in the root `Cargo.toml` before bumping: `pgmq` is a pinned git rev of the Sagebati fork (tracks diesel-async 0.9); `aide` is exact-pinned (`=0.16.0-alpha.4`) so the `OpenApi` type unifies across crates; `diesel-async`/`diesel_migrations` track diesel 2.x. diesel-async is Postgres/MySQL only (no SQLite). pgmq is Postgres-only (no SQLite backend).
+- Several third-party pins are deliberate and load-bearing — read the comments in the root `Cargo.toml` before bumping: `pgmq` is a pinned git rev of the Sagebati fork's `install-only` branch (upstream `main` plus a diesel-async SQL installer; tracks sqlx 0.9 / diesel-async 0.9); `aide` is exact-pinned (`=0.16.0-alpha.4`) so the `OpenApi` type unifies across crates; `diesel-async`/`diesel_migrations` track diesel 2.x. diesel-async is Postgres/MySQL only (no SQLite). pgmq is Postgres-only (no SQLite backend).
 - App code conventionally does `use muxa::prelude::*;`, which brings in `App`, the `Plugin` trait, capability traits, and one canonical plugin per enabled feature.
 
 ## Crate map
