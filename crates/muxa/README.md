@@ -55,7 +55,7 @@ where
 }
 ```
 
-The routes callback has to be a `fn` item like the ones above, or a function returning `impl FnOnce(&S) -> Router`. A bare `move |_state| router` closure does not compile (`FnOnce` is not general enough); see [`muxa-web`](../muxa-web) for the helper.
+The routes callback can be a `fn` item like the ones above, or a closure whose parameter is annotated: `move |_state: &_| router`. Without the `&_` the closure does not compile (`FnOnce` is not general enough).
 
 The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is documented in [`muxa-core`](../muxa-core).
 
@@ -64,40 +64,37 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 | Feature | Enables |
 |---|---|
 | `web` *(default)* | `WebPlugin`: axum serve loop with ctrl-c graceful shutdown ([`muxa-web`](../muxa-web)) |
+| `web-no-signal` | in place of `web`: the same without the ctrl-c handler |
 | `ratelimit` | per-IP rate-limit layer: `RateLimitConfig`, `per_ip_layer` |
-| `otel` *(default)* | `OtelPlugin` ([`muxa-otel`](../muxa-otel)) |
+| `otel` *(default)* | `OtelPlugin`, with the tower-http `TraceLayer` ([`muxa-otel`](../muxa-otel)) |
 | `otel-otlp-tonic`, `otel-otlp-http` | OTLP export over gRPC or HTTP |
 | `otel-tracing-bridge`, `otel-metrics`, `otel-logs` | which signals are exported |
 | `otel-traces` | the trace SDK without the `tracing` bridge |
 | `sentry` | `SentryPlugin` with the `tracing` bridge ([`muxa-sentry`](../muxa-sentry)) |
+| `sentry-no-tracing` | in place of `sentry`: the same without the bridge |
 | `sqlx` | Postgres `SqlxPlugin` / `SqlxPool`, rustls ([`muxa-sqlx`](../muxa-sqlx)) |
+| `sqlx-tls-native` | in place of `sqlx`: the same with native-tls |
 | `sqlite` | `SqlitePlugin` / `SqlitePool` |
 | `sqlx-macros`, `sqlx-migrate`, `sqlx-chrono`, `sqlx-time`, `sqlx-uuid`, `sqlx-json`, `sqlx-bigdecimal`, `sqlx-rust_decimal` | forwarded to sqlx; no-ops unless `sqlx` or `sqlite` is on |
 | `diesel` | `DieselPlugin` / `DieselPool`, async Postgres ([`muxa-diesel`](../muxa-diesel)) |
 | `diesel-migrations` | `MigrationsRunner`, `embed_migrations!` (implies `diesel`) |
 | `diesel-sentry` | a tracing span per query (implies `diesel`) |
 | `diesel-chrono`, `diesel-uuid`, `diesel-json`, `diesel-numeric`, `diesel-network` | forwarded to diesel |
+| `diesel-mysql` | compiles diesel-async's MySQL driver; there is no MySQL plugin yet |
 | `pgmq` | `PgmqPlugin` ([`muxa-pgmq`](../muxa-pgmq)); the backend follows `sqlx` or `diesel` |
 | `pgmq-tracing-spans` | spans around queue operations |
 | `openapi` | `OpenApiPlugin`, `muxa::aide`, `muxa::schemars` ([`muxa-openapi`](../muxa-openapi)); with `web`, also `ApiPlugin` |
 | `full` | `web`, `sqlx` (+ chrono, uuid, json), `pgmq`, `otel`, `sentry`, `openapi` |
 
-`use muxa::prelude::*;` brings in `App`, the `Plugin` trait, the state and capability traits, and the plugin, config and resource types of every enabled feature. The integration crates are also reachable as modules: `muxa::web`, `muxa::sqlx`, `muxa::diesel`, `muxa::pgmq`, `muxa::otel`, `muxa::sentry`, `muxa::openapi`.
+`use muxa::prelude::*;` brings in `App`, the `Plugin` trait, the state and capability traits, and each enabled feature's plugin and resource types. Config types are there too, except `WebConfig` and `ApiConfig`, which are at `muxa::web::…`.
+
+The integration crates are also reachable as modules, each under its own feature: `muxa::web`, `muxa::sqlx`, `muxa::diesel`, `muxa::pgmq`, `muxa::otel`, `muxa::sentry`, `muxa::openapi`. `sqlite` alone does not give `muxa::sqlx`, and `ratelimit` alone does not give `muxa::web`; their prelude names still work.
 
 `muxa::sqlx` and `muxa::diesel` are the muxa plugin crates, not sqlx and diesel themselves. To write queries, add `sqlx` or `diesel` + `diesel-async` to your own `Cargo.toml`.
 
-### Current limitations
-
-- `web-no-signal`, `sentry-no-tracing` and `sqlx-tls-native` pull in their integration crate, but the facade's re-exports are gated on `web`, `sentry` and `sqlx`, so on their own they expose nothing. For those variants, depend on `muxa-web`, `muxa-sentry` or `muxa-sqlx` directly.
-- `diesel-mysql` only compiles diesel-async's MySQL driver. There is no MySQL plugin yet.
-- The facade does not forward `muxa-otel`'s `http-layer` feature, so `OtelPlugin` used through the facade does not mount the tower-http `TraceLayer`. Adding `muxa-otel` as a direct dependency (its default features include `http-layer`) turns it on.
-
 ## Configuration
 
-Two layers, last one wins:
-
-1. one TOML file: `$MUXA_CONFIG` if set, otherwise `./muxa.toml`. A missing file is fine.
-2. environment variables prefixed `MUXA_`, with `__` between keys: `MUXA_WEB__PORT=8080` sets `web.port`.
+One TOML file, `./muxa.toml` by default, overridden by environment variables prefixed `MUXA_`: `MUXA_WEB__PORT=8080` sets `web.port`.
 
 ```toml
 # muxa.toml
@@ -111,15 +108,9 @@ port = 3000
 service_name = "my-app"
 ```
 
-Each plugin reads one section, and a missing section means that plugin's defaults. The sections are listed in each crate's README.
+Each plugin reads its own section (`ApiPlugin` reads two, `[web]` and `[openapi]`), and a missing section means that plugin's defaults. The sections are listed in each crate's README.
 
-| Constructor | Config file | Env prefix |
-|---|---|---|
-| `App::default()` | `$MUXA_CONFIG` or `./muxa.toml` | `MUXA_` |
-| `App::with_config_file(path)` | `path` | `MUXA_` |
-| `App::with_env_prefix("MYAPP_")` | `$MYAPP_CONFIG` or `./muxa.toml` | `MYAPP_` |
-| `App::with_config_file_and_env_prefix(path, "MYAPP_")` | `path` | `MYAPP_` |
-| `App::with_figment(figment)` | whatever you built | whatever you built |
+The exact layering rules, and the `App` constructors for another file or another env prefix, are in [`muxa-core`](../muxa-core#config).
 
 Log verbosity comes from `RUST_LOG` (default `info`).
 
