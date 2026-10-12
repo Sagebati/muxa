@@ -159,36 +159,43 @@ impl<S: State> AppBuilder<S> {
     }
 }
 
+/// What became of the background tasks at shutdown, by name.
+#[derive(Debug, Default)]
+struct TaskOutcomes {
+    /// Tasks that panicked (or were cancelled).
+    failed: Vec<&'static str>,
+    /// Tasks still running when the grace period ran out.
+    abandoned: Vec<&'static str>,
+}
+
 /// Wait for the background tasks to return, for at most
-/// [`TASK_SHUTDOWN_GRACE`]. Logs tasks that panicked or didn't stop in time.
-async fn join_tasks(mut tasks: Vec<(&'static str, JoinHandle<()>)>) {
-    if tasks.is_empty() {
-        return;
-    }
-    // `&mut JoinHandle` is itself a future, so the handles are awaited in place.
-    let joined = futures::future::join_all(tasks.iter_mut().map(|(_, handle)| handle));
-    let outcome = tokio::time::timeout(TASK_SHUTDOWN_GRACE, joined).await;
-    match outcome {
-        Ok(results) => {
-            for ((name, _), result) in tasks.iter().zip(results) {
-                if let Err(err) = result {
-                    tracing::error!(task = name, %err, "background task failed");
-                }
+/// [`TASK_SHUTDOWN_GRACE`] in all. Logs tasks that panicked or didn't stop in
+/// time.
+async fn join_tasks(tasks: Vec<(&'static str, JoinHandle<()>)>) -> TaskOutcomes {
+    // One deadline for all: the tasks run concurrently, so awaiting them in turn
+    // still waits at most the grace period overall. A task that has already
+    // returned yields its result even past the deadline (the handle is polled
+    // before the timer), so its panic is reported rather than lost.
+    let deadline = tokio::time::Instant::now() + TASK_SHUTDOWN_GRACE;
+    let mut outcomes = TaskOutcomes::default();
+    for (name, handle) in tasks {
+        match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!(task = name, %err, "background task failed");
+                outcomes.failed.push(name);
             }
-        }
-        Err(_elapsed) => {
-            let running: Vec<&str> = tasks
-                .iter()
-                .filter(|(_, handle)| !handle.is_finished())
-                .map(|(name, _)| *name)
-                .collect();
-            tracing::warn!(
-                tasks = ?running,
-                grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
-                "background tasks still running after the shutdown grace period; abandoning them"
-            );
+            Err(_elapsed) => outcomes.abandoned.push(name),
         }
     }
+    if !outcomes.abandoned.is_empty() {
+        tracing::warn!(
+            tasks = ?outcomes.abandoned,
+            grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
+            "background tasks still running after the shutdown grace period; abandoning them"
+        );
+    }
+    outcomes
 }
 
 #[cfg(test)]
@@ -261,6 +268,23 @@ mod tests {
             .await
             .unwrap();
         assert!(flushed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_reports_failed_and_abandoned_tasks() {
+        let hangs = tokio::spawn(std::future::pending::<()>());
+        let fails = tokio::spawn(async { panic!("flush failed") });
+        let returns = tokio::spawn(async {});
+        let outcomes = join_tasks(vec![
+            ("hangs", hangs),
+            ("fails", fails),
+            ("returns", returns),
+        ])
+        .await;
+        // `fails` is awaited after the deadline passed waiting on `hangs`, yet
+        // its panic is still reported.
+        assert_eq!(outcomes.failed, ["fails"]);
+        assert_eq!(outcomes.abandoned, ["hangs"]);
     }
 
     #[tokio::test]

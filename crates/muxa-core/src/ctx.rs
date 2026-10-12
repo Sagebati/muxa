@@ -213,8 +213,32 @@ impl TaskRegistry {
         self.tasks.push((name, spawn));
     }
 
-    /// Spawn every scheduled task, each with a child of `shutdown`.
-    pub(crate) fn spawn_all(self, shutdown: &ShutdownToken) -> Vec<(&'static str, JoinHandle<()>)> {
+    /// Number of scheduled tasks.
+    pub fn len(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// `true` if no task is scheduled.
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    /// Names of the scheduled tasks, in registration order.
+    pub fn names(&self) -> impl Iterator<Item = &'static str> {
+        self.tasks.iter().map(|(name, _)| *name)
+    }
+
+    /// Spawn every scheduled task on the current Tokio runtime, each with a
+    /// child of `shutdown`, and return their handles.
+    ///
+    /// [`App::run`](crate::App::run) does this. To drive the tasks yourself
+    /// instead, take them out of the context first:
+    /// `std::mem::take(&mut ctx.tasks).spawn_all(&token)`.
+    ///
+    /// # Panics
+    ///
+    /// Outside a Tokio runtime, like `tokio::spawn`.
+    pub fn spawn_all(self, shutdown: &ShutdownToken) -> Vec<(&'static str, JoinHandle<()>)> {
         self.tasks
             .into_iter()
             .map(|(name, spawn)| (name, spawn(shutdown.child_token())))
@@ -267,6 +291,26 @@ mod tests {
 
         // The request meets the last-registered layer first.
         assert_eq!(*seen.lock().unwrap(), ["second", "first"]);
+    }
+
+    #[tokio::test]
+    async fn scheduled_tasks_can_be_inspected_and_driven() {
+        let mut tasks = TaskRegistry::default();
+        assert!(tasks.is_empty());
+        tasks.spawn(
+            "first",
+            |shutdown| async move { shutdown.cancelled().await },
+        );
+        tasks.spawn("second", |_shutdown| async {});
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.names().collect::<Vec<_>>(), ["first", "second"]);
+
+        let shutdown = ShutdownToken::new();
+        let handles = tasks.spawn_all(&shutdown);
+        shutdown.cancel();
+        for (_, handle) in handles {
+            handle.await.unwrap();
+        }
     }
 
     #[test]

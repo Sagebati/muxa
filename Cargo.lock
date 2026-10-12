@@ -952,6 +952,7 @@ version = "0.1.0"
 dependencies = [
  "diesel",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2237,7 +2238,6 @@ dependencies = [
  "axum",
  "dupe",
  "figment",
- "futures",
  "http 1.4.0",
  "muxa-telemetry",
  "serde",
@@ -2291,6 +2291,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "serde",
+ "tokio",
  "tower-http",
  "tracing",
  "tracing-opentelemetry",
@@ -2318,6 +2319,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bon",
+ "figment",
  "muxa-core",
  "secrecy",
  "sentry",
@@ -2325,6 +2327,7 @@ dependencies = [
  "sentry-tracing",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 
@@ -2362,7 +2365,6 @@ dependencies = [
  "muxa-core",
  "muxa-openapi",
  "serde",
- "serde_json",
  "tokio",
  "tokio-util",
  "tower",

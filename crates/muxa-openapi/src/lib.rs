@@ -28,6 +28,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use std::borrow::Cow;
+
 use aide::openapi::OpenApi;
 use axum::Router;
 use axum::body::Bytes;
@@ -95,8 +97,11 @@ impl OpenApiPlugin {
 
 /// The standard Scalar standalone embed — loads the viewer from a CDN and
 /// points it at our spec URL. Kept tiny and dependency-free so `/docs` works
-/// without bundling JS assets.
+/// without bundling JS assets. Both values come from configuration, so they are
+/// escaped: a `"` must not end the `data-url` attribute, nor `<` start a tag.
 fn scalar_html(json_path: &str, title: &str) -> String {
+    let json_path = escape_html(json_path);
+    let title = escape_html(title);
     format!(
         "<!doctype html>\n\
          <html>\n  <head>\n    <title>{title}</title>\n\
@@ -109,6 +114,25 @@ fn scalar_html(json_path: &str, title: &str) -> String {
     )
 }
 
+/// `text` with the HTML-special characters escaped; borrowed when there are none.
+fn escape_html(text: &str) -> Cow<'_, str> {
+    if !text.contains(['&', '<', '>', '"', '\'']) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len() + 16);
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            other => escaped.push(other),
+        }
+    }
+    Cow::Owned(escaped)
+}
+
 /// Build the router that serves `api` as JSON at `cfg.json_path` plus a Scalar
 /// docs page at `cfg.docs_path`. Both bodies are rendered once here; a response
 /// only clones a `Bytes` (a refcount bump). Shared by [`OpenApiPlugin`] and
@@ -116,14 +140,16 @@ fn scalar_html(json_path: &str, title: &str) -> String {
 pub fn docs_router(api: &OpenApi, cfg: &OpenApiConfig) -> Result<Router> {
     let json = Bytes::from(serde_json::to_vec(api).map_err(Error::other)?);
     let docs = Bytes::from(scalar_html(&cfg.json_path, &cfg.title));
+    // Built once; cloning a static header value per response copies nothing
+    // (a `&str` value would be copied into a new buffer every time).
+    let content_type = HeaderValue::from_static("application/json");
 
     Ok(Router::new()
         .route(
             &cfg.json_path,
             get(move || {
                 let json = json.clone();
-                // `from_static`: a `&str` header value would be copied per response.
-                let content_type = HeaderValue::from_static("application/json");
+                let content_type = content_type.clone();
                 async move { ([(header::CONTENT_TYPE, content_type)], json) }
             }),
         )
@@ -194,5 +220,13 @@ mod tests {
                     .contains("data-url=\"/openapi.json\"")
             );
         }
+    }
+
+    #[test]
+    fn config_values_are_escaped_in_the_docs_page() {
+        let html = scalar_html("/spec.json\" onload=\"x", "Widgets <beta> & \"v2\"");
+        assert!(html.contains("<title>Widgets &lt;beta&gt; &amp; &quot;v2&quot;</title>"));
+        assert!(html.contains("data-url=\"/spec.json&quot; onload=&quot;x\""));
+        assert!(matches!(escape_html("/openapi.json"), Cow::Borrowed(_)));
     }
 }

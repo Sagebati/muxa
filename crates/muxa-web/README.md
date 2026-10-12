@@ -59,7 +59,7 @@ A bare closure, `WebPlugin::new(move |_state| router)`, does not compile: the cl
 
 | Key | Default | |
 |---|---|---|
-| `host` | `"0.0.0.0"` | bind IP address: an IPv4 or IPv6 literal, not a hostname (an invalid value fails at startup, when `[web]` is read) |
+| `host` | `"0.0.0.0"` | bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, `"[::1]"`) or a hostname such as `"localhost"`. In an env var write IPv6 bare (`MUXA_WEB__HOST=::1`): figment reads an unquoted `[::1]` as a list |
 | `port` | `3000` | `0` lets the OS pick |
 | `banner` | `true` | print the launch banner to stderr |
 

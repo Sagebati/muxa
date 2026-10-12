@@ -121,6 +121,11 @@ pub fn merge_queues(mut from_plugin: Vec<String>, from_config: Vec<String>) -> V
     from_plugin
 }
 
+#[allow(dead_code, reason = "dead when no driver features are enabled")]
+fn box_pgmq_err(err: pgmq::PgmqError) -> muxa_core::Error {
+    muxa_core::Error::other(format!("pgmq: {err}"))
+}
+
 // ---------------------------------------------------------------------------
 // Per-driver `Plugin` impls. Direct impls (no trait dispatch) keep the
 // returned future type concrete, side-stepping a Rust HRTB limitation with
@@ -153,7 +158,7 @@ mod sqlx_impl {
 
             pgmq::install::install_sql_from_embedded(&pool.0)
                 .await
-                .map_err(Error::other)?;
+                .map_err(super::box_pgmq_err)?;
 
             let mut conn = pool
                 .0
@@ -163,7 +168,10 @@ mod sqlx_impl {
             for queue in &queues {
                 // `Queue` is implemented for `&mut PgConnection`, not for the
                 // pooled-connection guard.
-                (&mut *conn).create(queue).await.map_err(Error::other)?;
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())
@@ -203,12 +211,15 @@ mod diesel_async_impl {
 
             pgmq::install::diesel_async::install_sql_from_embedded(&mut conn)
                 .await
-                .map_err(Error::other)?;
+                .map_err(super::box_pgmq_err)?;
 
             for queue in &queues {
                 // `Queue` is implemented for `&mut AsyncPgConnection` and its
                 // methods take `self`, so reborrow per call.
-                (&mut *conn).create(queue).await.map_err(Error::other)?;
+                (&mut *conn)
+                    .create(queue)
+                    .await
+                    .map_err(super::box_pgmq_err)?;
             }
 
             Ok(())
