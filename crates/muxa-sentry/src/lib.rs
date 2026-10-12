@@ -157,13 +157,14 @@ impl<S: State> Plugin<S> for SentryPlugin {
             .filter(|raw| !raw.is_empty());
         let dsn = raw_dsn.and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
 
+        let has_dsn = raw_dsn.is_some();
+
         // The app-wide run mode is the source of truth for env-aware defaults.
         let mode = ctx.mode;
         // Default the environment label to the run mode; an explicit config wins.
         let environment = cfg
             .environment
-            .clone()
-            .unwrap_or_else(|| mode.as_str().to_owned());
+            .map_or(Cow::Borrowed(mode.as_str()), Cow::Owned);
         // Unset rate ⇒ pick from the run mode (prod: light sampling, dev: full).
         // An explicit value (including 0.0, to disable) wins.
         let traces_sample_rate = cfg
@@ -179,8 +180,8 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
         let options = sentry::ClientOptions {
             dsn,
-            environment: Some(Cow::Owned(environment.clone())),
-            release: cfg.release.clone().map(Cow::Owned),
+            environment: Some(environment),
+            release: cfg.release.map(Cow::Owned),
             traces_sample_rate,
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
@@ -221,10 +222,11 @@ impl<S: State> Plugin<S> for SentryPlugin {
             ctx.telemetry.add_layer(sentry_tracing::layer());
         }
 
-        if raw_dsn.is_some() {
+        if has_dsn {
+            let options = guard.options();
             tracing::info!(
-                env = environment,
-                release = cfg.release.as_deref().unwrap_or("-"),
+                env = options.environment.as_deref().unwrap_or("-"),
+                release = options.release.as_deref().unwrap_or("-"),
                 traces_sample_rate,
                 logs = enable_logs,
                 "muxa-sentry: initialized"

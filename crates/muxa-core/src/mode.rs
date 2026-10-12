@@ -95,14 +95,22 @@ impl std::fmt::Display for RunMode {
 #[error("unknown run mode {0:?}; expected one of: development, production")]
 pub struct ParseRunModeError(String);
 
+/// Accepted spellings of each mode, matched case-insensitively.
+const DEVELOPMENT_ALIASES: [&str; 3] = ["development", "dev", "debug"];
+const PRODUCTION_ALIASES: [&str; 3] = ["production", "prod", "release"];
+
 impl FromStr for RunMode {
     type Err = ParseRunModeError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "development" | "dev" | "debug" => Ok(Self::Development),
-            "production" | "prod" | "release" => Ok(Self::Production),
-            other => Err(ParseRunModeError(other.to_owned())),
+        let raw = raw.trim();
+        let is = |aliases: &[&str]| aliases.iter().any(|alias| raw.eq_ignore_ascii_case(alias));
+        if is(&DEVELOPMENT_ALIASES) {
+            Ok(Self::Development)
+        } else if is(&PRODUCTION_ALIASES) {
+            Ok(Self::Production)
+        } else {
+            Err(ParseRunModeError(raw.to_owned()))
         }
     }
 }

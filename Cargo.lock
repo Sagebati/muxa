@@ -2275,6 +2275,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -2360,6 +2362,7 @@ dependencies = [
  "muxa-core",
  "muxa-openapi",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tower",

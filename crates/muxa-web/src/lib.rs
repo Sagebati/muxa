@@ -30,18 +30,18 @@ mod banner;
 #[cfg(feature = "ratelimit")]
 pub mod ratelimit;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::Router;
 use bon::Builder;
 #[cfg(feature = "openapi")]
 use muxa_core::Sections;
-use muxa_core::{BoxFuture, BuildCtx, Error, Mount, Plugin, Result, ServeFn, ShutdownToken, State};
+use muxa_core::{BoxFuture, BuildCtx, Mount, Plugin, Result, ServeFn, ShutdownToken, State};
 use serde::Deserialize;
 
-/// Default bind host.
-fn default_host() -> String {
-    "0.0.0.0".into()
+/// Default bind address: every IPv4 interface (`0.0.0.0`).
+const fn default_host() -> IpAddr {
+    IpAddr::V4(Ipv4Addr::UNSPECIFIED)
 }
 
 /// Default bind port.
@@ -55,9 +55,11 @@ fn default_port() -> u16 {
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct WebConfig {
-    /// Bind host. Defaults to `0.0.0.0`.
+    /// Bind address — an IPv4 or IPv6 literal (no hostnames), so a bad value
+    /// fails when the `[web]` section is read rather than when serving starts.
+    /// Defaults to `0.0.0.0`.
     #[builder(default = default_host())]
-    pub host: String,
+    pub host: IpAddr,
     /// Bind port. Defaults to `3000`.
     #[builder(default = default_port())]
     pub port: u16,
@@ -128,7 +130,12 @@ fn schedule_serve(cfg: WebConfig, ctx: &mut BuildCtx) -> Result<()> {
     // Snapshot the registered mount points for the launch banner. The serve
     // closure runs after `RouterRegistry` is consumed at `compose()` time, so
     // we can't read it from there.
-    let banner_mounts = cfg.banner.then(|| ctx.router.mounts());
+    let banner_mounts = cfg.banner.then(|| {
+        ctx.router
+            .mounts()
+            .map(|(prefix, mount)| (prefix.to_owned(), mount))
+            .collect()
+    });
 
     let shutdown = ctx.shutdown.clone();
     let serve_fn: ServeFn = Box::new(move |router: Router| -> BoxFuture<'static, Result<()>> {
@@ -224,11 +231,7 @@ async fn serve_loop(
     banner_mounts: Option<Vec<(String, Mount)>>,
     shutdown: ShutdownToken,
 ) -> Result<()> {
-    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
-        .parse()
-        .map_err(|err: std::net::AddrParseError| Error::other(err))?;
-
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(SocketAddr::new(cfg.host, cfg.port)).await?;
     let bound = listener.local_addr()?;
 
     if let Some(mounts) = banner_mounts {
@@ -273,17 +276,24 @@ mod tests {
     #[test]
     fn web_config_defaults() {
         let config = WebConfig::default();
-        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(config.port, 3000);
     }
 
     #[test]
     fn web_config_builder() {
         let config = WebConfig::builder()
-            .host("127.0.0.1".into())
+            .host(Ipv4Addr::LOCALHOST.into())
             .port(8080)
             .build();
-        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn web_config_host_parses_ip_literals_only() {
+        let config: WebConfig = serde_json::from_str(r#"{"host": "::1"}"#).unwrap();
+        assert_eq!(config.host, IpAddr::from(std::net::Ipv6Addr::LOCALHOST));
+        assert!(serde_json::from_str::<WebConfig>(r#"{"host": "localhost"}"#).is_err());
     }
 }

@@ -38,9 +38,7 @@ pub use config::{
     DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, load_figment, load_figment_from,
     load_figment_from_with_prefix, load_figment_with_prefix,
 };
-pub use ctx::{
-    BoxFuture, BoxTask, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry,
-};
+pub use ctx::{BoxFuture, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry};
 pub use dupe::{Dupe, Dupe_};
 pub use error::{BoxedError, Error, Result};
 pub use mode::RunMode;

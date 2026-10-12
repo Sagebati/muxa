@@ -1,11 +1,10 @@
 //! `App` and `AppBuilder` — the entry point and plugin-chain accumulator.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use figment::Figment;
-use tracing::Instrument as _;
+use tokio::task::JoinHandle;
 
 use crate::config::Sections;
 use crate::ctx::BuildCtx;
@@ -48,9 +47,7 @@ impl AppBuilder<HNil> {
     /// Useful when you want to ship `muxa.toml` next to a binary, in a
     /// system path, etc.
     pub fn with_config_file<P: AsRef<Path>>(path: P) -> Self {
-        Self::with_figment(crate::config::load_figment_from(
-            path.as_ref().to_path_buf(),
-        ))
+        Self::with_figment(crate::config::load_figment_from(path))
     }
 
     /// Like [`AppBuilder::default`], but reads env vars with a custom prefix
@@ -65,10 +62,7 @@ impl AppBuilder<HNil> {
     /// prefix instead of `MUXA_`. The prefix should include its trailing
     /// separator.
     pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_from_with_prefix(
-            path.as_ref().to_path_buf(),
-            prefix,
-        ))
+        Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
     }
 }
 
@@ -146,24 +140,12 @@ impl<S: State> AppBuilder<S> {
             )
         })?;
 
-        // Spawn background tasks.
         let shutdown = self.ctx.shutdown.clone();
-        let mut tasks = Vec::new();
-        for (name, task) in self.ctx.tasks.drain() {
-            let st = shutdown.child_token();
-            let handle = tokio::spawn(
-                async move {
-                    tracing::info!(task = name, "spawning background task");
-                    task(st).await;
-                }
-                .instrument(tracing::info_span!("muxa.task", name = name)),
-            );
-            tasks.push((name, handle));
-        }
+        let tasks = self.ctx.tasks.spawn_all(&shutdown);
 
         // The frozen state is reserved for future use (e.g. `Plugin::shutdown`
         // hooks) — for v0 we just keep it alive until run() returns.
-        let _state = Arc::new(self.state);
+        let _state = self.state;
 
         let router = self.ctx.router.compose();
         let served = serve(router).await;
@@ -179,23 +161,29 @@ impl<S: State> AppBuilder<S> {
 
 /// Wait for the background tasks to return, for at most
 /// [`TASK_SHUTDOWN_GRACE`]. Logs tasks that panicked or didn't stop in time.
-async fn join_tasks(tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)>) {
+async fn join_tasks(mut tasks: Vec<(&'static str, JoinHandle<()>)>) {
     if tasks.is_empty() {
         return;
     }
-    let (names, handles): (Vec<_>, Vec<_>) = tasks.into_iter().unzip();
-    let joined = futures::future::join_all(handles);
-    match tokio::time::timeout(TASK_SHUTDOWN_GRACE, joined).await {
+    // `&mut JoinHandle` is itself a future, so the handles are awaited in place.
+    let joined = futures::future::join_all(tasks.iter_mut().map(|(_, handle)| handle));
+    let outcome = tokio::time::timeout(TASK_SHUTDOWN_GRACE, joined).await;
+    match outcome {
         Ok(results) => {
-            for (name, result) in names.iter().zip(results) {
+            for ((name, _), result) in tasks.iter().zip(results) {
                 if let Err(err) = result {
                     tracing::error!(task = name, %err, "background task failed");
                 }
             }
         }
         Err(_elapsed) => {
+            let running: Vec<&str> = tasks
+                .iter()
+                .filter(|(_, handle)| !handle.is_finished())
+                .map(|(name, _)| *name)
+                .collect();
             tracing::warn!(
-                tasks = ?names,
+                tasks = ?running,
                 grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
                 "background tasks still running after the shutdown grace period; abandoning them"
             );
@@ -205,6 +193,8 @@ async fn join_tasks(tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::state::HCons;
     use figment::providers::Format as _;

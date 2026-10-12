@@ -59,7 +59,7 @@ A bare closure, `WebPlugin::new(move |_state| router)`, does not compile: the cl
 
 | Key | Default | |
 |---|---|---|
-| `host` | `"0.0.0.0"` | bind address |
+| `host` | `"0.0.0.0"` | bind IP address: an IPv4 or IPv6 literal, not a hostname (an invalid value fails at startup, when `[web]` is read) |
 | `port` | `3000` | `0` lets the OS pick |
 | `banner` | `true` | print the launch banner to stderr |
 

@@ -61,7 +61,7 @@ type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
 /// Reload handle over the growable stack of plugin layers.
 type LayersHandle = reload::Handle<Vec<BoxedLayer>, Registry>;
 /// Targets hidden from plugin layers; shared with the slot's filter.
-type Excluded = Arc<RwLock<Vec<String>>>;
+type Excluded = Arc<RwLock<Vec<&'static str>>>;
 
 /// The process-wide plugin-layer slot.
 struct Slot {
@@ -85,11 +85,9 @@ fn level_filter() -> EnvFilter {
 /// matching as a `RUST_LOG` target directive (`hyper` also covers
 /// `hyper::client` and `hyper_util`).
 fn is_excluded(excluded: &Excluded, target: &str) -> bool {
-    excluded.read().is_ok_and(|excluded| {
-        excluded
-            .iter()
-            .any(|prefix| target.starts_with(prefix.as_str()))
-    })
+    excluded
+        .read()
+        .is_ok_and(|excluded| excluded.iter().any(|prefix| target.starts_with(prefix)))
 }
 
 /// The filter in front of every plugin layer: the `RUST_LOG` levels (so the
@@ -207,16 +205,20 @@ impl TelemetryRegistry {
     /// its export path (its HTTP/gRPC client, the exporter SDK), so the layer
     /// never re-exports what its own exporting emits.
     ///
+    /// Targets are `&'static str`, like tracing's own
+    /// [`Metadata::target`](tracing::Metadata::target): crate names, known at
+    /// compile time.
+    ///
     /// No-op when no subscriber is installed.
-    pub fn exclude_targets(&self, targets: &[&str]) {
+    pub fn exclude_targets(&self, targets: &[&'static str]) {
         let Some(slot) = self.slot else { return };
         {
             let Ok(mut excluded) = slot.excluded.write() else {
                 return;
             };
-            for target in targets {
-                if !excluded.iter().any(|known| known == target) {
-                    excluded.push((*target).to_owned());
+            for &target in targets {
+                if !excluded.contains(&target) {
+                    excluded.push(target);
                 }
             }
         }

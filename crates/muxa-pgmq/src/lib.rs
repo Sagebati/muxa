@@ -115,14 +115,10 @@ impl<B: PgBackend, Idx> Default for PgmqPlugin<B, Idx> {
 #[doc(hidden)]
 pub fn merge_queues(mut from_plugin: Vec<String>, from_config: Vec<String>) -> Vec<String> {
     from_plugin.extend(from_config);
-    from_plugin.sort();
+    // Unstable is fine (equal names are identical) and needs no scratch buffer.
+    from_plugin.sort_unstable();
     from_plugin.dedup();
     from_plugin
-}
-
-#[allow(dead_code, reason = "dead when no driver features are enabled")]
-fn box_pgmq_err(err: pgmq::PgmqError) -> muxa_core::Error {
-    muxa_core::Error::other(format!("pgmq: {err}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +153,7 @@ mod sqlx_impl {
 
             pgmq::install::install_sql_from_embedded(&pool.0)
                 .await
-                .map_err(super::box_pgmq_err)?;
+                .map_err(Error::other)?;
 
             let mut conn = pool
                 .0
@@ -167,10 +163,7 @@ mod sqlx_impl {
             for queue in &queues {
                 // `Queue` is implemented for `&mut PgConnection`, not for the
                 // pooled-connection guard.
-                (&mut *conn)
-                    .create(queue)
-                    .await
-                    .map_err(super::box_pgmq_err)?;
+                (&mut *conn).create(queue).await.map_err(Error::other)?;
             }
 
             Ok(())
@@ -210,15 +203,12 @@ mod diesel_async_impl {
 
             pgmq::install::diesel_async::install_sql_from_embedded(&mut conn)
                 .await
-                .map_err(super::box_pgmq_err)?;
+                .map_err(Error::other)?;
 
             for queue in &queues {
                 // `Queue` is implemented for `&mut AsyncPgConnection` and its
                 // methods take `self`, so reborrow per call.
-                (&mut *conn)
-                    .create(queue)
-                    .await
-                    .map_err(super::box_pgmq_err)?;
+                (&mut *conn).create(queue).await.map_err(Error::other)?;
             }
 
             Ok(())
