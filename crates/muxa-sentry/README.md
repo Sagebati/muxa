@@ -45,7 +45,7 @@ Anything that already emits `tracing` spans shows up in Sentry through that brid
 | `http_transactions` | `true` | wrap each request in a transaction. No effect when the sample rate is `0.0` |
 | `logs` | `true` | send `tracing` events at INFO and above as Sentry structured logs. Needs `tracing-bridge` |
 
-The run mode is muxa's `RunMode`: the top-level `env` config key, or else the build profile (see [`muxa-core`](../muxa-core)).
+The run mode is muxa's `RunMode`; how it is resolved is described in [`muxa-core`](../muxa-core#runmode).
 
 Things to know:
 

@@ -55,7 +55,7 @@ async fn main() -> muxa::Result<()> {
 | `create_if_missing` | `true` | create the database file if it does not exist |
 | `max_connections` | `5` | |
 
-The default is an in-memory database, which is gone once the pool is dropped. It suits tests and examples.
+The default is an in-memory database. It exists only while at least one pooled connection is open, and sqlx closes idle connections after 10 minutes and recycles them after 30, so the data can disappear while the app is still running. It suits tests and examples; use a file for anything you need to keep.
 
 ## Running queries
 
@@ -64,7 +64,7 @@ The default is an in-memory database, which is gone once the pool is dropped. It
 This crate does not re-export sqlx. Add it to your own `Cargo.toml` at the same version line (0.8) and pass the pool where sqlx expects an executor:
 
 ```rust
-let (one,): (i64,) = sqlx::query_as("SELECT 1").fetch_one(&*pool).await?;
+let (one,): (i32,) = sqlx::query_as("SELECT 1").fetch_one(&*pool).await?;
 ```
 
 The facade forwards sqlx's optional features as `sqlx-macros`, `sqlx-migrate`, `sqlx-chrono`, `sqlx-uuid`, `sqlx-json` and so on.

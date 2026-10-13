@@ -11,7 +11,7 @@ Most apps want `ApiPlugin` from [`muxa-web`](../muxa-web). It takes an aide `Api
 `OpenApiPlugin` is the lower-level piece for when you finish the router yourself. Add it before `WebPlugin`:
 
 ```rust
-use axum::{Json, Router};
+use axum::Json;
 use muxa::aide::axum::ApiRouter;
 use muxa::aide::axum::routing::get;
 use muxa::aide::openapi::OpenApi;
@@ -28,10 +28,6 @@ async fn thing() -> Json<Thing> {
     Json(Thing { name: "widget".to_owned() })
 }
 
-fn with_router<S>(router: Router) -> impl FnOnce(&S) -> Router + Send + 'static {
-    move |_state: &S| router
-}
-
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
     let mut api = OpenApi::default();
@@ -41,7 +37,7 @@ async fn main() -> muxa::Result<()> {
 
     App::default()
         .with_plugin(OpenApiPlugin::new(api)).await?       // /openapi.json + /docs
-        .with_plugin(WebPlugin::new(with_router(router))).await?
+        .with_plugin(WebPlugin::new(move |_state: &_| router)).await?
         .run().await
 }
 ```

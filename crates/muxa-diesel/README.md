@@ -84,7 +84,7 @@ App::default()
 
 ## Query tracing
 
-With the `sentry` feature, `DieselPlugin` installs [`diesel-sentry`](../diesel-sentry) as diesel's global instrumentation before it opens any connection. Every query, connection and transaction then produces a `tracing` span, which reaches Sentry through [`muxa-sentry`](../muxa-sentry) or an OTLP collector through [`muxa-otel`](../muxa-otel). Nothing else has to be configured.
+With the `sentry` feature, `DieselPlugin` installs [`diesel-sentry`](../diesel-sentry) as diesel's global instrumentation before it opens any connection. Every query and every connection attempt then produces a `tracing` span (query spans carry the transaction depth; a transaction has no span of its own), which reaches Sentry through [`muxa-sentry`](../muxa-sentry) or an OTLP collector through [`muxa-otel`](../muxa-otel). Nothing else has to be configured.
 
 ## Features
 

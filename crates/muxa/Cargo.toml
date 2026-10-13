@@ -57,8 +57,9 @@ diesel-network      = ["muxa-diesel?/network"]
 # PGMQ.
 pgmq                = ["dep:muxa-pgmq"]
 
-# OpenTelemetry / observability.
-otel                = ["dep:muxa-otel"]
+# OpenTelemetry / observability. `otel` carries muxa-otel's own default
+# (`http-layer`: the tower-http TraceLayer), as `web` does for graceful-shutdown.
+otel                = ["dep:muxa-otel", "muxa-otel/http-layer"]
 otel-traces         = ["muxa-otel?/traces"]
 otel-metrics        = ["muxa-otel?/metrics"]
 otel-logs           = ["muxa-otel?/logs"]
