@@ -21,6 +21,11 @@ serde       = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }
 
+# wasm: `Vars::from_js` reads config from a JS object (a Worker's `Env`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys       = { workspace = true }
+wasm-bindgen = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 # `test` feature enables `figment::Jail` for env-var-isolated config tests.

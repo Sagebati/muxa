@@ -91,6 +91,13 @@ http        = "1"
 tower_governor = "0.8"
 governor = "0.10"
 
+# JS interop on wasm targets (no Cloudflare dependency): muxa-telemetry writes
+# to the JS console, muxa-core reads config from a JS object (a Worker's Env).
+# Same 0.2/0.3 lines as workers-rs, so they unify with an app's `worker` dep.
+js-sys       = "0.3"
+wasm-bindgen = "0.2"
+web-sys      = "0.3"
+
 # Database
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),
 # `tls-*`, and column-type adapters are opted in via `muxa-sqlx`'s own Cargo

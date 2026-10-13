@@ -2,7 +2,9 @@
 //!
 //! Owns the global `tracing-subscriber`. The base subscriber is a plain
 //! `tracing-subscriber::fmt::layer()` scoped by an `EnvFilter`
-//! (`RUST_LOG`, default `info`).
+//! (`RUST_LOG`, default `info`). On wasm, where there is no stdout, events go
+//! to the JS console instead (`console.log` and friends, by level), so logs
+//! work on Cloudflare Workers and other JS hosts with no setup.
 //!
 //! ## How plugin layers attach
 //!
@@ -48,6 +50,9 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(any(test, target_family = "wasm"))]
+mod console;
+
 use core::any::TypeId;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -72,7 +77,8 @@ struct Slot {
     /// it, both only ever changed under this lock.
     kinds: Mutex<Vec<TypeId>>,
     excluded: Excluded,
-    /// One per filtered output: the plugin slot, and `fmt` where it exists.
+    /// One per filtered output: the plugin slot and `fmt` (the JS console on
+    /// wasm).
     levels: Vec<SetLevel>,
 }
 
@@ -119,7 +125,11 @@ fn install_subscriber() -> Option<Slot> {
     // The levels are reloadable so `set_level` can change them after install
     // — the only way to set them where there is no `RUST_LOG` (wasm).
     let (slot_levels, slot_levels_handle) = reload::Layer::new(level_filter());
-    let levels: Vec<SetLevel> = vec![Box::new(move |filter| slot_levels_handle.reload(filter))];
+    let (output_levels, output_levels_handle) = reload::Layer::new(level_filter());
+    let levels: Vec<SetLevel> = vec![
+        Box::new(move |filter| slot_levels_handle.reload(filter)),
+        Box::new(move |filter| output_levels_handle.reload(filter)),
+    ];
 
     // Filter the whole slot once, *here* at build time — so the `Filtered`
     // layer is registered with the subscriber and gets a `FilterId`.
@@ -128,20 +138,18 @@ fn install_subscriber() -> Option<Slot> {
     let subscriber = tracing_subscriber::registry()
         .with(layers_slot.with_filter(plugin_filter(slot_levels, Arc::clone(&excluded))));
 
-    // wasm has no stdout and no clock (`fmt`'s timestamp panics on
-    // wasm32-unknown-unknown), so there the subscriber is the plugin slot
-    // alone; the host plugin (e.g. muxa-worker's console layer) adds the
-    // output layer through `add_layer`.
+    // The output: `fmt` to stdout natively. wasm has no stdout and no clock
+    // (`fmt`'s timestamp panics on wasm32-unknown-unknown), so there events
+    // go to the JS console instead.
     #[cfg(not(target_family = "wasm"))]
-    let (subscriber, levels) = {
-        let (fmt_levels, fmt_levels_handle) = reload::Layer::new(level_filter());
-        let mut levels = levels;
-        levels.push(Box::new(move |filter| fmt_levels_handle.reload(filter)));
-        let subscriber = subscriber.with(tracing_subscriber::fmt::layer().with_filter(fmt_levels));
-        (subscriber, levels)
-    };
+    let output = tracing_subscriber::fmt::layer();
+    #[cfg(target_family = "wasm")]
+    let output = console::ConsoleLayer::new(console::js_console);
 
-    subscriber.try_init().ok()?;
+    subscriber
+        .with(output.with_filter(output_levels))
+        .try_init()
+        .ok()?;
 
     Some(Slot {
         layers,
@@ -164,7 +172,7 @@ impl TelemetryRegistry {
     /// Get the process's plugin-layer slot, installing the global subscriber
     /// on the first call: a reload slot for plugin layers, then a plain
     /// `fmt::layer()` filtered by `EnvFilter` (`RUST_LOG`, default `info`).
-    /// On wasm targets the `fmt` layer is left out (no stdout, no clock).
+    /// On wasm targets the JS console takes the place of `fmt`.
     ///
     /// If the application installed its own subscriber first, the registry is
     /// detached and `add_layer` becomes a silent no-op.
@@ -226,8 +234,7 @@ impl TelemetryRegistry {
     }
 
     /// Hide events and spans of these crates from every plugin layer. They
-    /// still reach the `fmt` output — except on wasm, which has no `fmt`
-    /// layer, so there they are hidden everywhere. A target matches a crate when it is the
+    /// still reach the `fmt` output (the JS console on wasm). A target matches a crate when it is the
     /// crate or one of its modules: `"hyper"` covers `hyper::client`, but not
     /// `hyper_util` — name each crate on the path.
     ///

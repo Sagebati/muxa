@@ -13,6 +13,7 @@ use crate::ctx::BuildCtx;
 use crate::error::{Error, Result};
 use crate::plugin::Plugin;
 use crate::state::{HNil, State};
+use crate::vars::Vars;
 
 /// How long [`AppBuilder::run`] waits for background tasks to return once
 /// serving has ended and the shutdown token is cancelled. Long enough for a
@@ -66,6 +67,22 @@ impl AppBuilder<HNil> {
     /// separator.
     pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
         Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
+    }
+
+    /// Create an empty builder reading config from string variables instead
+    /// of a file and the process environment, with the env-var convention:
+    /// the var `MUXA_PGMQ__URL` sets `pgmq.url`.
+    ///
+    /// For hosts with neither, chiefly Cloudflare Workers:
+    /// `App::with_vars(Vars::from_js(env.as_ref()))`.
+    pub fn with_vars(vars: Vars) -> Self {
+        Self::with_vars_and_env_prefix(vars, crate::config::DEFAULT_ENV_PREFIX)
+    }
+
+    /// Like [`AppBuilder::with_vars`], with a custom prefix instead of
+    /// `MUXA_`. The prefix should include its trailing separator.
+    pub fn with_vars_and_env_prefix(vars: Vars, prefix: &str) -> Self {
+        Self::with_figment(crate::config::load_figment_from_vars(vars, prefix))
     }
 }
 
@@ -133,17 +150,16 @@ impl<S: State> AppBuilder<S> {
     /// back together with the final state HList.
     ///
     /// This is the terminal step for hosts that drive the router themselves
-    /// instead of running a serve loop — Cloudflare Workers (see
-    /// `muxa-worker`), serverless adapters, or tests calling the router as a
-    /// `tower::Service`.
+    /// instead of running a serve loop — Cloudflare Workers and other wasm
+    /// hosts, serverless adapters, or tests calling the router as a
+    /// `tower::Service`. The chain is the same as for [`run`](Self::run): a
+    /// serve loop the web plugin registered natively is simply not started.
     ///
     /// Such hosts have nowhere to run background tasks, so tasks registered
     /// via [`TaskRegistry::spawn`](crate::TaskRegistry::spawn) are an
-    /// **error** here rather than being silently dropped. A registered serve
-    /// function (a `WebPlugin` in the chain) is an error for the same reason:
-    /// it would never be invoked. So is a chain that mounted no routes — every
-    /// request would be a 404 — which usually means the routing plugin (e.g.
-    /// `WorkerPlugin`) is missing.
+    /// **error** here rather than being silently dropped. So is a chain that
+    /// mounted no routes — every request would be a 404 — which usually means
+    /// the web plugin is missing.
     ///
     /// The shutdown token goes away with the build context, uncancelled. A
     /// caller that can run the tasks itself keeps a handle to the token,
@@ -158,12 +174,6 @@ impl<S: State> AppBuilder<S> {
     /// shutdown.cancel();
     /// ```
     pub fn into_router(self) -> Result<(axum::Router, S)> {
-        if self.ctx.serve_fn.is_some() {
-            return Err(Error::other(
-                "into_router() called with a serve function registered — \
-                 a serving plugin (WebPlugin) can't be combined with into_router()",
-            ));
-        }
         if !self.ctx.tasks.is_empty() {
             let registered = match self.ctx.tasks.len() {
                 1 => "a background task is",
@@ -177,7 +187,7 @@ impl<S: State> AppBuilder<S> {
         }
         if self.ctx.router.mounts().next().is_none() {
             return Err(Error::other(
-                "into_router() found no routes — add a routing plugin (e.g. WorkerPlugin) \
+                "into_router() found no routes — add a web plugin (e.g. WebPlugin) \
                  as the last plugin in the chain",
             ));
         }
@@ -351,7 +361,8 @@ mod tests {
         assert_eq!(outcomes.abandoned, ["hangs"]);
     }
 
-    /// A plugin that mounts one route and (optionally) registers a task.
+    /// A plugin that mounts one route, registers a serve fn the way the web
+    /// plugin does natively, and (optionally) registers a task.
     struct RoutePlugin {
         with_task: bool,
     }
@@ -371,7 +382,11 @@ mod tests {
                     |shutdown| async move { shutdown.cancelled().await },
                 );
             }
-            Ok(())
+            // `into_router` must drop this rather than fail: the same chain
+            // finishes with `run()` or `into_router()`.
+            ctx.set_serve_fn(Box::new(|_router| {
+                Box::pin(async { Err(Error::other("into_router must not serve")) })
+            }))
         }
     }
 

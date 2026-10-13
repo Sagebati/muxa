@@ -7,6 +7,7 @@ use figment::providers::{Env, Format as _, Toml};
 use serde::de::DeserializeOwned;
 
 use crate::error::Result;
+use crate::vars::Vars;
 
 /// Default config-file path: `muxa.toml` in the current directory.
 pub const DEFAULT_CONFIG_PATH: &str = "muxa.toml";
@@ -70,6 +71,18 @@ pub fn load_figment_from_with_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> F
         // into the figment as a top-level `config` key. (The `{prefix}CONFIG`
         // var maps to the `config` key once the prefix is stripped.)
         .merge(Env::prefixed(prefix).split("__").ignore(&["config"]))
+}
+
+/// Build the application figment from string variables instead of the process
+/// environment, with the same convention: keep the vars prefixed `prefix`,
+/// `__` as key separator, and `{prefix}CONFIG` ignored. `MUXA_PGMQ__URL` maps
+/// to `pgmq.url`.
+///
+/// For hosts with no process environment and no config file — a Cloudflare
+/// Worker passes `Vars::from_js(env.as_ref())`. The prefix should include its
+/// trailing separator.
+pub fn load_figment_from_vars(vars: Vars, prefix: &str) -> Figment {
+    Figment::from(vars.prefixed(prefix).split("__").ignore(&["config"]))
 }
 
 /// A plugin's view of the application configuration: named sections, read one

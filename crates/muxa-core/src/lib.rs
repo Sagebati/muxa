@@ -31,12 +31,13 @@ pub mod error;
 pub mod mode;
 pub mod plugin;
 pub mod state;
+pub mod vars;
 
 pub use app::{App, AppBuilder};
 pub use capability::{HasPgExecutorFor, PgBackend};
 pub use config::{
     DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, load_figment, load_figment_from,
-    load_figment_from_with_prefix, load_figment_with_prefix,
+    load_figment_from_vars, load_figment_from_with_prefix, load_figment_with_prefix,
 };
 pub use ctx::{BoxFuture, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry};
 pub use dupe::{Dupe, Dupe_};
@@ -45,6 +46,7 @@ pub use mode::RunMode;
 pub use muxa_telemetry::TelemetryRegistry;
 pub use plugin::Plugin;
 pub use state::{HCons, HNil, Here, Selector, State, There};
+pub use vars::Vars;
 
 /// Common imports for application and plugin code.
 pub mod prelude {

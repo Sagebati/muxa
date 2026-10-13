@@ -19,7 +19,10 @@ default = ["web", "otel"]
 # a build error.
 # ---------------------------------------------------------------------------
 
-# Web (axum serve loop + graceful shutdown).
+# Web (axum serve loop + graceful shutdown). Also the wasm path (Cloudflare
+# Workers): there `WebPlugin` only mounts routes and the host drives the router
+# from `into_router()`. Build with `default-features = false` and `web`, since
+# `otel` doesn't target wasm.
 web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
 web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
