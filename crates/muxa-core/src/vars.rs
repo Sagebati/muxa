@@ -52,11 +52,14 @@ impl Vars {
         }
     }
 
-    /// Read every string-valued own property of a JS object — for a
-    /// Cloudflare Worker, its `Env` (`Vars::from_js(env.as_ref())`): the
-    /// `[vars]` of `wrangler.toml` and the secrets. Other properties (D1, KV,
-    /// JSON vars, …) are skipped. The values are copied out, so the provider
-    /// holds no JS handle.
+    /// Read the own properties of a JS object that hold a string, a number
+    /// or a boolean — for a Cloudflare Worker, its `Env`
+    /// (`Vars::from_js(env.as_ref())`): the `[vars]` of `wrangler.toml` and
+    /// the secrets. Wrangler hands `MUXA_WEB__BANNER = false` or
+    /// `MUXA_PGMQ__POOL = 4` over as a JS boolean or number; they are turned
+    /// back into text (`"false"`, `"4"`) and parsed like every other var.
+    /// Other properties (D1, KV and other bindings, object or array vars) are
+    /// skipped. The values are copied out, so the provider holds no JS handle.
     #[cfg(target_family = "wasm")]
     #[must_use]
     pub fn from_js(object: &wasm_bindgen::JsValue) -> Self {
@@ -66,7 +69,7 @@ impl Vars {
         let entries = Object::entries(object.unchecked_ref::<Object>());
         Self::from_pairs(entries.iter().filter_map(|entry| {
             let entry = Array::from(&entry);
-            Some((entry.get(0).as_string()?, entry.get(1).as_string()?))
+            Some((entry.get(0).as_string()?, scalar_text(&entry.get(1))?))
         }))
     }
 
@@ -117,6 +120,21 @@ impl Vars {
             Some((key.to_owned(), value.as_str()))
         })
     }
+}
+
+/// A JS string, number or boolean as the text an env var would hold. `None`
+/// for anything else (objects — bindings among them — arrays, `null`, …).
+#[cfg(target_family = "wasm")]
+fn scalar_text(value: &wasm_bindgen::JsValue) -> Option<String> {
+    if let Some(text) = value.as_string() {
+        return Some(text);
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(flag.to_string());
+    }
+    // `f64`'s `Display` writes integers without a fraction (`4`, not `4.0`),
+    // so figment parses them back as integers.
+    value.as_f64().map(|number| number.to_string())
 }
 
 impl core::fmt::Debug for Vars {
