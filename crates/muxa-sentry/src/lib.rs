@@ -37,7 +37,7 @@
 use std::borrow::Cow;
 
 use bon::Builder;
-use muxa_core::{BuildCtx, Plugin, Result, RunMode, State};
+use muxa_core::{BuildCtx, Error, Plugin, Result, RunMode, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use sentry::ClientInitGuard;
 use sentry_tower::{NewSentryLayer, SentryHttpLayer};
@@ -54,8 +54,9 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct SentryConfig {
     /// Sentry DSN. If `None`/empty, the SDK initializes a no-op client and
-    /// no events are sent — useful for development. A [`SecretString`] so it's
-    /// redacted in `Debug`/logs; exposed only to parse it at init.
+    /// no events are sent — useful for development. A DSN that doesn't parse
+    /// fails the build instead of silently disabling Sentry. A [`SecretString`]
+    /// so it's redacted in `Debug`/logs; exposed only to parse it at init.
     pub dsn: Option<SecretString>,
     /// Logical environment (e.g. `"development"`, `"production"`). When unset,
     /// it defaults to the app-wide [`RunMode`](muxa_core::RunMode) label
@@ -149,21 +150,27 @@ impl<S: State> Plugin<S> for SentryPlugin {
         ctx: &mut BuildCtx,
     ) -> Result<SentryHandle> {
         // Treat empty string as None. The DSN is a secret — expose it only to
-        // parse it here, never to logs.
-        let raw_dsn = cfg
+        // parse it here, never to logs (the parse error doesn't echo it).
+        let dsn = cfg
             .dsn
             .as_ref()
             .map(|secret| secret.expose_secret())
-            .filter(|raw| !raw.is_empty());
-        let dsn = raw_dsn.and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
+            .filter(|raw| !raw.is_empty())
+            .map(|raw| {
+                raw.parse::<sentry::types::Dsn>().map_err(|err| {
+                    Error::other(format!(
+                        "muxa-sentry: `sentry.dsn` is not a valid DSN: {err}"
+                    ))
+                })
+            })
+            .transpose()?;
 
         // The app-wide run mode is the source of truth for env-aware defaults.
         let mode = ctx.mode;
         // Default the environment label to the run mode; an explicit config wins.
         let environment = cfg
             .environment
-            .clone()
-            .unwrap_or_else(|| mode.as_str().to_owned());
+            .map_or(Cow::Borrowed(mode.as_str()), Cow::Owned);
         // Unset rate ⇒ pick from the run mode (prod: light sampling, dev: full).
         // An explicit value (including 0.0, to disable) wins.
         let traces_sample_rate = cfg
@@ -179,8 +186,8 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
         let options = sentry::ClientOptions {
             dsn,
-            environment: Some(Cow::Owned(environment.clone())),
-            release: cfg.release.clone().map(Cow::Owned),
+            environment: Some(environment),
+            release: cfg.release.map(Cow::Owned),
             traces_sample_rate,
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
@@ -217,14 +224,17 @@ impl<S: State> Plugin<S> for SentryPlugin {
             // Keep what that transport logs away from the bridge, or it would
             // report its own reporting.
             ctx.telemetry
-                .exclude_targets(&["h2", "hyper", "reqwest", "tower"]);
+                .exclude_targets(&["h2", "hyper", "hyper_util", "reqwest", "tower"]);
             ctx.telemetry.add_layer(sentry_tracing::layer());
         }
 
-        if raw_dsn.is_some() {
+        // Whether events are actually sent: also true for a DSN the SDK picked
+        // up from `SENTRY_DSN` when the config has none.
+        if guard.is_enabled() {
+            let options = guard.options();
             tracing::info!(
-                env = environment,
-                release = cfg.release.as_deref().unwrap_or("-"),
+                env = options.environment.as_deref().unwrap_or("-"),
+                release = options.release.as_deref().unwrap_or("-"),
                 traces_sample_rate,
                 logs = enable_logs,
                 "muxa-sentry: initialized"
@@ -239,7 +249,11 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::SentryConfig;
+    use figment::Figment;
+    use figment::providers::{Format as _, Toml};
+    use muxa_core::App;
+
+    use super::{SentryConfig, SentryPlugin};
 
     /// `#[serde(default)]` fills omitted fields from `Default` — which must be
     /// the hand-written impl, not a derived all-`false`. Regression guard: an
@@ -263,5 +277,26 @@ mod tests {
         assert!(!cfg.logs);
         assert!(!cfg.http_transactions);
         assert!(cfg.attach_stacktrace, "untouched field keeps its default");
+    }
+
+    /// A DSN that doesn't parse fails the build rather than quietly disabling
+    /// Sentry — and the error doesn't leak the DSN.
+    #[tokio::test]
+    async fn invalid_dsn_fails_the_build() {
+        let config = Toml::string("[sentry]\ndsn = \"htps//secret-key@o1.ingest.sentry.io\"\n");
+        let result = App::with_figment(Figment::from(config))
+            .with_plugin(SentryPlugin)
+            .await;
+        let Err(err) = result else {
+            panic!("an invalid DSN must fail the build");
+        };
+        let mut chain = err.to_string();
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            chain.push_str(&format!(": {cause}"));
+            source = cause.source();
+        }
+        assert!(chain.contains("not a valid DSN"), "{chain}");
+        assert!(!chain.contains("secret-key"), "DSN leaked: {chain}");
     }
 }

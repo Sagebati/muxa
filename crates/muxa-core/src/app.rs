@@ -1,11 +1,10 @@
 //! `App` and `AppBuilder` — the entry point and plugin-chain accumulator.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use figment::Figment;
-use tracing::Instrument as _;
+use tokio::task::JoinHandle;
 
 use crate::config::Sections;
 use crate::ctx::BuildCtx;
@@ -48,9 +47,7 @@ impl AppBuilder<HNil> {
     /// Useful when you want to ship `muxa.toml` next to a binary, in a
     /// system path, etc.
     pub fn with_config_file<P: AsRef<Path>>(path: P) -> Self {
-        Self::with_figment(crate::config::load_figment_from(
-            path.as_ref().to_path_buf(),
-        ))
+        Self::with_figment(crate::config::load_figment_from(path))
     }
 
     /// Like [`AppBuilder::default`], but reads env vars with a custom prefix
@@ -65,10 +62,7 @@ impl AppBuilder<HNil> {
     /// prefix instead of `MUXA_`. The prefix should include its trailing
     /// separator.
     pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_from_with_prefix(
-            path.as_ref().to_path_buf(),
-            prefix,
-        ))
+        Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
     }
 }
 
@@ -146,24 +140,12 @@ impl<S: State> AppBuilder<S> {
             )
         })?;
 
-        // Spawn background tasks.
         let shutdown = self.ctx.shutdown.clone();
-        let mut tasks = Vec::new();
-        for (name, task) in self.ctx.tasks.drain() {
-            let st = shutdown.child_token();
-            let handle = tokio::spawn(
-                async move {
-                    tracing::info!(task = name, "spawning background task");
-                    task(st).await;
-                }
-                .instrument(tracing::info_span!("muxa.task", name = name)),
-            );
-            tasks.push((name, handle));
-        }
+        let tasks = self.ctx.tasks.spawn_all(&shutdown);
 
         // The frozen state is reserved for future use (e.g. `Plugin::shutdown`
         // hooks) — for v0 we just keep it alive until run() returns.
-        let _state = Arc::new(self.state);
+        let _state = self.state;
 
         let router = self.ctx.router.compose();
         let served = serve(router).await;
@@ -177,34 +159,49 @@ impl<S: State> AppBuilder<S> {
     }
 }
 
+/// What became of the background tasks at shutdown, by name.
+#[derive(Debug, Default)]
+struct TaskOutcomes {
+    /// Tasks that panicked (or were cancelled).
+    failed: Vec<&'static str>,
+    /// Tasks still running when the grace period ran out.
+    abandoned: Vec<&'static str>,
+}
+
 /// Wait for the background tasks to return, for at most
-/// [`TASK_SHUTDOWN_GRACE`]. Logs tasks that panicked or didn't stop in time.
-async fn join_tasks(tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)>) {
-    if tasks.is_empty() {
-        return;
-    }
-    let (names, handles): (Vec<_>, Vec<_>) = tasks.into_iter().unzip();
-    let joined = futures::future::join_all(handles);
-    match tokio::time::timeout(TASK_SHUTDOWN_GRACE, joined).await {
-        Ok(results) => {
-            for (name, result) in names.iter().zip(results) {
-                if let Err(err) = result {
-                    tracing::error!(task = name, %err, "background task failed");
-                }
+/// [`TASK_SHUTDOWN_GRACE`] in all. Logs tasks that panicked or didn't stop in
+/// time.
+async fn join_tasks(tasks: Vec<(&'static str, JoinHandle<()>)>) -> TaskOutcomes {
+    // One deadline for all: the tasks run concurrently, so awaiting them in turn
+    // still waits at most the grace period overall. A task that has already
+    // returned yields its result even past the deadline (the handle is polled
+    // before the timer), so its panic is reported rather than lost.
+    let deadline = tokio::time::Instant::now() + TASK_SHUTDOWN_GRACE;
+    let mut outcomes = TaskOutcomes::default();
+    for (name, handle) in tasks {
+        match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!(task = name, %err, "background task failed");
+                outcomes.failed.push(name);
             }
-        }
-        Err(_elapsed) => {
-            tracing::warn!(
-                tasks = ?names,
-                grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
-                "background tasks still running after the shutdown grace period; abandoning them"
-            );
+            Err(_elapsed) => outcomes.abandoned.push(name),
         }
     }
+    if !outcomes.abandoned.is_empty() {
+        tracing::warn!(
+            tasks = ?outcomes.abandoned,
+            grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
+            "background tasks still running after the shutdown grace period; abandoning them"
+        );
+    }
+    outcomes
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::state::HCons;
     use figment::providers::Format as _;
@@ -271,6 +268,23 @@ mod tests {
             .await
             .unwrap();
         assert!(flushed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_reports_failed_and_abandoned_tasks() {
+        let hangs = tokio::spawn(std::future::pending::<()>());
+        let fails = tokio::spawn(async { panic!("flush failed") });
+        let returns = tokio::spawn(async {});
+        let outcomes = join_tasks(vec![
+            ("hangs", hangs),
+            ("fails", fails),
+            ("returns", returns),
+        ])
+        .await;
+        // `fails` is awaited after the deadline passed waiting on `hangs`, yet
+        // its panic is still reported.
+        assert_eq!(outcomes.failed, ["fails"]);
+        assert_eq!(outcomes.abandoned, ["hangs"]);
     }
 
     #[tokio::test]

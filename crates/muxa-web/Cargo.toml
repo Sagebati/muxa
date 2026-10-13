@@ -45,5 +45,8 @@ bon         = { workspace = true }
 serde       = { workspace = true }
 tracing     = { workspace = true }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "net"] }
+
 [lints]
 workspace = true

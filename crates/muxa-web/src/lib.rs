@@ -36,7 +36,7 @@ use axum::Router;
 use bon::Builder;
 #[cfg(feature = "openapi")]
 use muxa_core::Sections;
-use muxa_core::{BoxFuture, BuildCtx, Error, Mount, Plugin, Result, ServeFn, ShutdownToken, State};
+use muxa_core::{BoxFuture, BuildCtx, Plugin, Result, ServeFn, ShutdownToken, State};
 use serde::Deserialize;
 
 /// Default bind host.
@@ -55,7 +55,8 @@ fn default_port() -> u16 {
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct WebConfig {
-    /// Bind host. Defaults to `0.0.0.0`.
+    /// Bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, as in a
+    /// URL: `[::1]`) or a hostname such as `localhost`. Defaults to `0.0.0.0`.
     #[builder(default = default_host())]
     pub host: String,
     /// Bind port. Defaults to `3000`.
@@ -125,14 +126,13 @@ where
 /// Snapshot the banner data and register the serve loop on the build context.
 /// Shared by [`WebPlugin`] and the aide-aware [`ApiPlugin`].
 fn schedule_serve(cfg: WebConfig, ctx: &mut BuildCtx) -> Result<()> {
-    // Snapshot the registered mount points for the launch banner. The serve
-    // closure runs after `RouterRegistry` is consumed at `compose()` time, so
-    // we can't read it from there.
-    let banner_mounts = cfg.banner.then(|| ctx.router.mounts());
+    // Render the banner's routes now: the serve closure runs after
+    // `RouterRegistry` is consumed at `compose()` time.
+    let banner_routes = cfg.banner.then(|| banner::routes(&ctx.router));
 
     let shutdown = ctx.shutdown.clone();
     let serve_fn: ServeFn = Box::new(move |router: Router| -> BoxFuture<'static, Result<()>> {
-        Box::pin(serve_loop(router, cfg, banner_mounts, shutdown))
+        Box::pin(serve_loop(router, cfg, banner_routes, shutdown))
     });
     ctx.set_serve_fn(serve_fn)
 }
@@ -221,18 +221,16 @@ where
 async fn serve_loop(
     router: Router,
     cfg: WebConfig,
-    banner_mounts: Option<Vec<(String, Mount)>>,
+    banner_routes: Option<String>,
     shutdown: ShutdownToken,
 ) -> Result<()> {
-    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
-        .parse()
-        .map_err(|err: std::net::AddrParseError| Error::other(err))?;
-
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // `(host, port)` goes through `ToSocketAddrs`: an IP literal is parsed
+    // without a lookup, a hostname is resolved.
+    let listener = tokio::net::TcpListener::bind((bind_host(&cfg.host), cfg.port)).await?;
     let bound = listener.local_addr()?;
 
-    if let Some(mounts) = banner_mounts {
-        banner::print(bound, &mounts);
+    if let Some(routes) = banner_routes {
+        banner::print(bound, &routes);
     }
 
     tracing::info!(%bound, "muxa-web: serving");
@@ -266,6 +264,14 @@ async fn serve_loop(
     Ok(())
 }
 
+/// `host` without the brackets of a URL-style IPv6 literal (`[::1]` → `::1`),
+/// which `ToSocketAddrs` doesn't take.
+fn bind_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +291,24 @@ mod tests {
             .build();
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn bind_host_strips_ipv6_brackets_only() {
+        assert_eq!(bind_host("[::1]"), "::1");
+        assert_eq!(bind_host("[fe80::1%2]"), "fe80::1%2");
+        assert_eq!(bind_host("::1"), "::1");
+        assert_eq!(bind_host("0.0.0.0"), "0.0.0.0");
+        assert_eq!(bind_host("localhost"), "localhost");
+    }
+
+    /// The forms the old `"{host}:{port}"` parse took still bind, and hostnames
+    /// now do too.
+    #[tokio::test]
+    async fn binds_ip_literals_and_hostnames() {
+        for host in ["127.0.0.1", "localhost"] {
+            let listener = tokio::net::TcpListener::bind((bind_host(host), 0)).await;
+            assert!(listener.is_ok(), "{host}: {listener:?}");
+        }
     }
 }

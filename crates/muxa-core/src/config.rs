@@ -1,6 +1,6 @@
 //! figment-based configuration loading.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use figment::Figment;
 use figment::providers::{Env, Format as _, Toml};
@@ -42,18 +42,17 @@ pub fn load_figment() -> Figment {
 /// (e.g. prefix `MYAPP_` → `$MYAPP_CONFIG`). The prefix should include its
 /// trailing separator (matching figment's `Env::prefixed` convention).
 pub fn load_figment_with_prefix(prefix: &str) -> Figment {
-    let config_var = format!("{prefix}CONFIG");
-    let path = std::env::var_os(config_var)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH));
-    load_figment_from_with_prefix(path, prefix)
+    match std::env::var_os(format!("{prefix}CONFIG")) {
+        Some(path) => load_figment_from_with_prefix(path, prefix),
+        None => load_figment_from_with_prefix(DEFAULT_CONFIG_PATH, prefix),
+    }
 }
 
 /// Build the application figment from a specific config-file path.
 ///
 /// Same env-var layering as [`load_figment`], but the file path is
 /// supplied explicitly.
-pub fn load_figment_from<P: Into<PathBuf>>(path: P) -> Figment {
+pub fn load_figment_from<P: AsRef<Path>>(path: P) -> Figment {
     load_figment_from_with_prefix(path, DEFAULT_ENV_PREFIX)
 }
 
@@ -64,9 +63,9 @@ pub fn load_figment_from<P: Into<PathBuf>>(path: P) -> Figment {
 /// [`load_figment_from`] with the custom prefix of
 /// [`load_figment_with_prefix`]. The prefix should include its trailing
 /// separator.
-pub fn load_figment_from_with_prefix<P: Into<PathBuf>>(path: P, prefix: &str) -> Figment {
+pub fn load_figment_from_with_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Figment {
     Figment::new()
-        .merge(Toml::file(path.into()))
+        .merge(Toml::file(path))
         // Strip the framework's own bootstrap env var so it doesn't leak
         // into the figment as a top-level `config` key. (The `{prefix}CONFIG`
         // var maps to the `config` key once the prefix is stripped.)

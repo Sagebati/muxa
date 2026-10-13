@@ -4,6 +4,9 @@
 use core::future::Future;
 use core::pin::Pin;
 
+use tokio::task::JoinHandle;
+use tracing::Instrument as _;
+
 use crate::error::Result;
 
 /// Cancellation token used to coordinate graceful shutdown across the app.
@@ -16,9 +19,9 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// with the final composed router.
 pub type ServeFn = Box<dyn FnOnce(axum::Router) -> BoxFuture<'static, Result<()>> + Send>;
 
-/// A type-erased background task — gets handed a [`ShutdownToken`] and returns
-/// a future the runtime drives on `tokio::spawn`.
-pub type BoxTask = Box<dyn FnOnce(ShutdownToken) -> BoxFuture<'static, ()> + Send + 'static>;
+/// A registered background task: spawns its (concrete, unboxed) future on the
+/// runtime when handed its [`ShutdownToken`].
+type SpawnTask = Box<dyn FnOnce(ShutdownToken) -> JoinHandle<()> + Send + 'static>;
 
 /// Per-application build context — passed to every plugin's `build()`. Holds
 /// the router and task registries, the shutdown token, the telemetry kernel,
@@ -81,7 +84,7 @@ impl BuildCtx {
 }
 
 /// How a plugin's router is composed into the final app router.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mount {
     /// Automatically merged at compose-time. Default for plugin-owned routes.
     Auto,
@@ -139,30 +142,24 @@ impl RouterRegistry {
         self.layer_fns.push(Box::new(func));
     }
 
-    /// Snapshot the registered mount points (prefix + mount mode) without
-    /// consuming the registry. Used by the web plugin to print a launch
-    /// banner.
-    pub fn mounts(&self) -> Vec<(String, Mount)> {
+    /// Iterate over the registered mount points (prefix + mount mode), in
+    /// registration order, without consuming the registry. Used by the web
+    /// plugin to print a launch banner.
+    pub fn mounts(&self) -> impl Iterator<Item = (&str, Mount)> {
         self.routes
             .iter()
-            .map(|entry| (entry.prefix.clone(), entry.mount.clone()))
-            .collect()
+            .map(|entry| (entry.prefix.as_str(), entry.mount))
     }
 
-    /// Drain all `Manual` entries matching `prefix`, returning their routers
+    /// Remove all `Manual` entries matching `prefix`, returning their routers
     /// for the user to nest themselves. Useful from a custom routes function.
     pub fn take_manual(&mut self, prefix: &str) -> Vec<axum::Router> {
-        let mut taken = Vec::new();
-        let mut keep = Vec::with_capacity(self.routes.len());
-        for entry in std::mem::take(&mut self.routes) {
-            if matches!(entry.mount, Mount::Manual) && entry.prefix == prefix {
-                taken.push(entry.router);
-            } else {
-                keep.push(entry);
-            }
-        }
-        self.routes = keep;
-        taken
+        self.routes
+            .extract_if(.., |entry| {
+                entry.mount == Mount::Manual && entry.prefix == prefix
+            })
+            .map(|entry| entry.router)
+            .collect()
     }
 
     /// Compose all `Auto`-mounted routers, then apply middleware in
@@ -171,7 +168,7 @@ impl RouterRegistry {
     pub fn compose(self) -> axum::Router {
         let mut out = axum::Router::new();
         for entry in self.routes {
-            if matches!(entry.mount, Mount::Auto) {
+            if entry.mount == Mount::Auto {
                 if entry.prefix.is_empty() || entry.prefix == "/" {
                     out = out.merge(entry.router);
                 } else {
@@ -186,13 +183,13 @@ impl RouterRegistry {
     }
 }
 
-/// Registry of background tasks; drained at [`crate::App::run`] into
-/// `tokio::spawn` calls. Each task gets a [`ShutdownToken`]; once serving ends
+/// Registry of background tasks; spawned on the runtime at
+/// [`crate::App::run`]. Each task gets a [`ShutdownToken`]; once serving ends
 /// the token is cancelled and `run` waits (for a bounded time) for the tasks
 /// to return, so a task can use it to flush or drain before the process exits.
 #[derive(Default)]
 pub struct TaskRegistry {
-    tasks: Vec<(&'static str, BoxTask)>,
+    tasks: Vec<(&'static str, SpawnTask)>,
 }
 
 impl TaskRegistry {
@@ -202,13 +199,50 @@ impl TaskRegistry {
         F: FnOnce(ShutdownToken) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.tasks
-            .push((name, Box::new(|shutdown| Box::pin(func(shutdown)))));
+        // Only the closure is boxed: the future itself goes straight into the
+        // runtime's task, unboxed.
+        let spawn: SpawnTask = Box::new(move |shutdown| {
+            tokio::spawn(
+                async move {
+                    tracing::info!(task = name, "spawning background task");
+                    func(shutdown).await;
+                }
+                .instrument(tracing::info_span!("muxa.task", name = name)),
+            )
+        });
+        self.tasks.push((name, spawn));
     }
 
-    /// Drain all scheduled tasks for spawning.
-    pub fn drain(&mut self) -> Vec<(&'static str, BoxTask)> {
-        std::mem::take(&mut self.tasks)
+    /// Number of scheduled tasks.
+    pub fn len(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// `true` if no task is scheduled.
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    /// Names of the scheduled tasks, in registration order.
+    pub fn names(&self) -> impl Iterator<Item = &'static str> {
+        self.tasks.iter().map(|(name, _)| *name)
+    }
+
+    /// Spawn every scheduled task on the current Tokio runtime, each with a
+    /// child of `shutdown`, and return their handles.
+    ///
+    /// [`App::run`](crate::App::run) does this. To drive the tasks yourself
+    /// instead, take them out of the context first:
+    /// `std::mem::take(&mut ctx.tasks).spawn_all(&token)`.
+    ///
+    /// # Panics
+    ///
+    /// Outside a Tokio runtime, like `tokio::spawn`.
+    pub fn spawn_all(self, shutdown: &ShutdownToken) -> Vec<(&'static str, JoinHandle<()>)> {
+        self.tasks
+            .into_iter()
+            .map(|(name, spawn)| (name, spawn(shutdown.child_token())))
+            .collect()
     }
 }
 
@@ -257,5 +291,49 @@ mod tests {
 
         // The request meets the last-registered layer first.
         assert_eq!(*seen.lock().unwrap(), ["second", "first"]);
+    }
+
+    #[tokio::test]
+    async fn scheduled_tasks_can_be_inspected_and_driven() {
+        let mut tasks = TaskRegistry::default();
+        assert!(tasks.is_empty());
+        tasks.spawn(
+            "first",
+            |shutdown| async move { shutdown.cancelled().await },
+        );
+        tasks.spawn("second", |_shutdown| async {});
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.names().collect::<Vec<_>>(), ["first", "second"]);
+
+        let shutdown = ShutdownToken::new();
+        let handles = tasks.spawn_all(&shutdown);
+        shutdown.cancel();
+        for (_, handle) in handles {
+            handle.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn take_manual_removes_only_matching_manual_mounts() {
+        let mut registry = RouterRegistry::default();
+        registry.mount("/api", axum::Router::new());
+        registry.mount_manual("/admin", axum::Router::new());
+        registry.mount_manual("/other", axum::Router::new());
+        registry.mount_manual("/admin", axum::Router::new());
+        // Same prefix, but auto-mounted: stays.
+        registry.mount("/admin", axum::Router::new());
+
+        assert_eq!(registry.take_manual("/admin").len(), 2);
+        assert!(registry.take_manual("/admin").is_empty());
+
+        let remaining: Vec<_> = registry.mounts().collect();
+        assert_eq!(
+            remaining,
+            [
+                ("/api", Mount::Auto),
+                ("/other", Mount::Manual),
+                ("/admin", Mount::Auto),
+            ]
+        );
     }
 }

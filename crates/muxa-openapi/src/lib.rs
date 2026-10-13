@@ -28,10 +28,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use std::borrow::Cow;
+
 use aide::openapi::OpenApi;
 use axum::Router;
 use axum::body::Bytes;
-use axum::http::header;
+use axum::http::{HeaderValue, header};
 use axum::response::Html;
 use axum::routing::get;
 use muxa_core::{BuildCtx, Error, Plugin, Result, State};
@@ -95,8 +97,11 @@ impl OpenApiPlugin {
 
 /// The standard Scalar standalone embed — loads the viewer from a CDN and
 /// points it at our spec URL. Kept tiny and dependency-free so `/docs` works
-/// without bundling JS assets.
+/// without bundling JS assets. Both values come from configuration, so they are
+/// escaped: a `"` must not end the `data-url` attribute, nor `<` start a tag.
 fn scalar_html(json_path: &str, title: &str) -> String {
+    let json_path = escape_html(json_path);
+    let title = escape_html(title);
     format!(
         "<!doctype html>\n\
          <html>\n  <head>\n    <title>{title}</title>\n\
@@ -109,20 +114,43 @@ fn scalar_html(json_path: &str, title: &str) -> String {
     )
 }
 
+/// `text` with the HTML-special characters escaped; borrowed when there are none.
+fn escape_html(text: &str) -> Cow<'_, str> {
+    if !text.contains(['&', '<', '>', '"', '\'']) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len() + 16);
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            other => escaped.push(other),
+        }
+    }
+    Cow::Owned(escaped)
+}
+
 /// Build the router that serves `api` as JSON at `cfg.json_path` plus a Scalar
-/// docs page at `cfg.docs_path`. The document is serialized once here (responses
-/// clone the cheap `Bytes`). Shared by [`OpenApiPlugin`] and `muxa-web`'s
-/// aide-aware web plugin, so both serve the spec identically.
+/// docs page at `cfg.docs_path`. Both bodies are rendered once here; a response
+/// only clones a `Bytes` (a refcount bump). Shared by [`OpenApiPlugin`] and
+/// `muxa-web`'s aide-aware web plugin, so both serve the spec identically.
 pub fn docs_router(api: &OpenApi, cfg: &OpenApiConfig) -> Result<Router> {
     let json = Bytes::from(serde_json::to_vec(api).map_err(Error::other)?);
-    let docs = scalar_html(&cfg.json_path, &cfg.title);
+    let docs = Bytes::from(scalar_html(&cfg.json_path, &cfg.title));
+    // Built once; cloning a static header value per response copies nothing
+    // (a `&str` value would be copied into a new buffer every time).
+    let content_type = HeaderValue::from_static("application/json");
 
     Ok(Router::new()
         .route(
             &cfg.json_path,
             get(move || {
                 let json = json.clone();
-                async move { ([(header::CONTENT_TYPE, "application/json")], json) }
+                let content_type = content_type.clone();
+                async move { ([(header::CONTENT_TYPE, content_type)], json) }
             }),
         )
         .route(
@@ -144,5 +172,61 @@ impl<S: State> Plugin<S> for OpenApiPlugin {
         tracing::info!(json = %cfg.json_path, docs = %cfg.docs_path, "muxa-openapi: mounting docs");
         ctx.router.mount("/", router);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use tower::ServiceExt as _;
+
+    use super::*;
+
+    async fn get_path(router: Router, path: &str) -> (Option<HeaderValue>, Bytes) {
+        let request = axum::http::Request::get(path).body(Body::empty()).unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert!(
+            response.status().is_success(),
+            "{path}: {}",
+            response.status()
+        );
+        let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (content_type, body)
+    }
+
+    #[tokio::test]
+    async fn serves_the_spec_and_the_docs_page() {
+        let mut api = OpenApi::default();
+        api.info.title = "widgets".to_owned();
+        let cfg = OpenApiConfig::default();
+        let router = docs_router(&api, &cfg).unwrap();
+
+        let (content_type, body) = get_path(router.clone(), &cfg.json_path).await;
+        assert_eq!(content_type.unwrap(), "application/json");
+        let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(spec["info"]["title"], "widgets");
+
+        // Served twice: the shared body is cloned, not consumed.
+        for _ in 0..2 {
+            let (content_type, body) = get_path(router.clone(), &cfg.docs_path).await;
+            assert_eq!(content_type.unwrap(), "text/html; charset=utf-8");
+            assert!(body.starts_with(b"<!doctype html>"));
+            assert!(
+                std::str::from_utf8(&body)
+                    .unwrap()
+                    .contains("data-url=\"/openapi.json\"")
+            );
+        }
+    }
+
+    #[test]
+    fn config_values_are_escaped_in_the_docs_page() {
+        let html = scalar_html("/spec.json\" onload=\"x", "Widgets <beta> & \"v2\"");
+        assert!(html.contains("<title>Widgets &lt;beta&gt; &amp; &quot;v2&quot;</title>"));
+        assert!(html.contains("data-url=\"/spec.json&quot; onload=&quot;x\""));
+        assert!(matches!(escape_html("/openapi.json"), Cow::Borrowed(_)));
     }
 }

@@ -115,7 +115,8 @@ impl<B: PgBackend, Idx> Default for PgmqPlugin<B, Idx> {
 #[doc(hidden)]
 pub fn merge_queues(mut from_plugin: Vec<String>, from_config: Vec<String>) -> Vec<String> {
     from_plugin.extend(from_config);
-    from_plugin.sort();
+    // Unstable is fine (equal names are identical) and needs no scratch buffer.
+    from_plugin.sort_unstable();
     from_plugin.dedup();
     from_plugin
 }
