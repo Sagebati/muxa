@@ -21,9 +21,11 @@ serde       = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }
 
-# wasm: `Vars::from_js` reads config from a JS object (a Worker's `Env`).
+# wasm: `Vars::from_js` reads config from a JS object (a Worker's `Env`);
+# `Local` holds JS handles (D1, KV, …) as app state.
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys       = { workspace = true }
+send_wrapper = { workspace = true }
 wasm-bindgen = { workspace = true }
 
 [dev-dependencies]

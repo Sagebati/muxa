@@ -30,6 +30,7 @@ pub mod ctx;
 pub mod error;
 pub mod mode;
 pub mod plugin;
+pub mod provide;
 pub mod state;
 pub mod vars;
 
@@ -45,13 +46,18 @@ pub use error::{BoxedError, Error, Result};
 pub use mode::RunMode;
 pub use muxa_telemetry::TelemetryRegistry;
 pub use plugin::Plugin;
+#[cfg(target_family = "wasm")]
+pub use provide::Local;
+pub use provide::Provide;
 pub use state::{HCons, HNil, Here, Selector, State, There};
 pub use vars::Vars;
 
 /// Common imports for application and plugin code.
 pub mod prelude {
+    #[cfg(target_family = "wasm")]
+    pub use crate::Local;
     pub use crate::{
-        App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgBackend, Plugin, Result,
-        RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
+        App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgBackend, Plugin, Provide,
+        Result, RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
     };
 }

@@ -97,6 +97,9 @@ governor = "0.10"
 js-sys       = "0.3"
 wasm-bindgen = "0.2"
 web-sys      = "0.3"
+# `muxa_core::Local`: JS handles as `Send + Sync` state on single-threaded wasm,
+# with a runtime check instead of `unsafe` in our code.
+send_wrapper = "0.6"
 
 # Database
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),
