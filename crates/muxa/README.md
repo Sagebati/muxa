@@ -90,6 +90,7 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 
 - `web-no-signal`, `sentry-no-tracing` and `sqlx-tls-native` pull in their integration crate, but the facade's re-exports are gated on `web`, `sentry` and `sqlx`, so on their own they expose nothing. For those variants, depend on `muxa-web`, `muxa-sentry` or `muxa-sqlx` directly.
 - `diesel-mysql` only compiles diesel-async's MySQL driver. There is no MySQL plugin yet.
+- On `wasm32-unknown-unknown` (see [Cloudflare Workers](#cloudflare-workers)), `web` and `openapi` are built and checked. `ratelimit`, `otel`, `sentry` and the database integrations are native-only.
 - The facade does not forward `muxa-otel`'s `http-layer` feature, so `OtelPlugin` used through the facade does not mount the tower-http `TraceLayer`. Adding `muxa-otel` as a direct dependency (its default features include `http-layer`) turns it on.
 
 ## Configuration
@@ -122,6 +123,86 @@ Each plugin reads one section, and a missing section means that plugin's default
 | `App::with_figment(figment)` | whatever you built | whatever you built |
 
 Log verbosity comes from `RUST_LOG` (default `info`).
+
+## Cloudflare Workers
+
+muxa builds for `wasm32-unknown-unknown` and has no Cloudflare dependency. A Worker is a normal [workers-rs](https://github.com/cloudflare/workers-rs) app that uses muxa to build its axum router, through workers-rs's own axum support. On wasm:
+
+- `WebPlugin` only mounts the routes. There is no serve loop, so the chain ends with `into_router()` instead of `run()`. The chain itself is the same as on a native app.
+- Logs go to the JS console, which is what `wrangler tail` and the dashboard show.
+- Config comes from the Worker's vars and secrets through `App::with_vars`, with the same naming as env vars natively: the var `MUXA_WEB__BANNER` sets `web.banner`. There is no config file.
+- Background tasks aren't supported. `into_router()` returns an error if a plugin registered one. Use a Cron Trigger (`#[event(scheduled)]`) instead.
+
+```toml
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+muxa   = { git = "https://github.com/Sagebati/muxa", default-features = false, features = ["web"] }
+worker = { version = "0.8", features = ["http", "d1"] }
+axum   = { version = "0.8", default-features = false, features = ["json"] }
+tokio  = { version = "1", default-features = false, features = ["sync"] }
+tower  = { version = "0.5", default-features = false }
+```
+
+```rust
+use axum::Router;
+use axum::routing::get;
+use muxa::prelude::*;
+use muxa::{TelemetryRegistry, Vars};
+use tokio::sync::OnceCell;
+use tower::Service as _;
+use worker::{Context, Env, HttpRequest, event};
+
+fn routes<S>(_state: &S) -> Router {
+    Router::new().route("/", get(|| async { "hello from a Worker" }))
+}
+
+async fn app(env: &Env) -> muxa::Result<Router> {
+    let (router, _state) = App::with_vars(Vars::from_js(env.as_ref()))
+        .with_plugin(WebPlugin::new(routes)).await?
+        .into_router()?;
+    Ok(router)
+}
+
+#[event(fetch)]
+async fn fetch(
+    mut req: HttpRequest,
+    env: Env,
+    _ctx: Context,
+) -> worker::Result<axum::http::Response<axum::body::Body>> {
+    // Build the app once per isolate; concurrent first requests share the build.
+    static ROUTER: OnceCell<Router> = OnceCell::const_new();
+    let router = ROUTER
+        .get_or_try_init(|| async {
+            // No process environment on Workers: take RUST_LOG from a var.
+            if let Ok(directives) = env.var("RUST_LOG") {
+                let _ = TelemetryRegistry::install().set_level(&directives.to_string());
+            }
+            app(&env).await
+        })
+        .await
+        .map_err(|err| worker::Error::RustError(err.to_string()))?;
+
+    req.extensions_mut().insert(env); // read in handlers as `Extension<Env>`
+    Ok(router.clone().call(req).await?)
+}
+```
+
+Handlers reach bindings (D1, KV, secrets) through `Extension<Env>`. Bindings are JS objects that can't be sent between threads, while axum requires `Send` futures, so mark any handler that awaits one with `#[worker::send]`:
+
+```rust
+use axum::extract::Extension;
+use axum::http::StatusCode;
+
+#[worker::send]
+async fn count(Extension(env): Extension<Env>) -> Result<String, StatusCode> {
+    let db = env.d1("DB").map_err(|_err| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // ...
+}
+```
+
+The prelude's `State` trait has the same name as axum's `State` extractor. Use the extractor as `axum::extract::State` when you need both.
 
 ## Examples
 

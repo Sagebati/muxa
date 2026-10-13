@@ -15,6 +15,12 @@ The first `TelemetryRegistry::install()` in a process sets a global subscriber m
 
 Installing up front means logs emitted before any observability plugin is built are not lost.
 
+On wasm targets there is no stdout, and `fmt`'s timestamps need a clock, so a console layer takes its place. It writes each event to the JS console (`console.error`, `warn`, `log` or `debug` by level), formatted like `fmt` without the timestamp: `INFO request{id=7}: my_app::sync: synced club=foo`. On Cloudflare Workers that is what `wrangler tail` and the dashboard show. It needs no Cloudflare dependency.
+
+## Changing the levels
+
+The levels come from `RUST_LOG` at install. `set_level("info,my_app=debug")` replaces them later, for plugin layers and `fmt` alike. It is how hosts without a process environment set them: a Worker passes its `RUST_LOG` var. Directives that don't parse are an error and leave the levels as they were.
+
 A process has one global subscriber, so it has one slot. Later `install()` calls return a handle to the same slot. A second `App` in the same process, in tests for example, shares it.
 
 ## Attaching a layer
@@ -37,7 +43,7 @@ A layer that ships events over the network would also capture what its own trans
 ctx.telemetry.exclude_targets(&["h2", "hyper", "hyper_util", "reqwest", "tower"]);
 ```
 
-Those targets are then hidden from every plugin layer. A target matches a crate when it is the crate or one of its modules: `"hyper"` covers `hyper::client` but not `hyper_util`, so name each crate on the path. That keeps `"tower"` from also hiding `tower_http`'s request spans. They still reach stdout, so export errors stay visible locally.
+Those targets are then hidden from every plugin layer. A target matches a crate when it is the crate or one of its modules: `"hyper"` covers `hyper::client` but not `hyper_util`, so name each crate on the path. That keeps `"tower"` from also hiding `tower_http`'s request spans. They still reach stdout (the JS console on wasm), so export errors stay visible locally.
 
 `muxa-otel` and `muxa-sentry` both do this for their transports.
 
