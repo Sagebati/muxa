@@ -68,9 +68,9 @@ muxa-openapi = { path = "crates/muxa-openapi", version = "0.1.0", default-featur
 diesel-sentry = { path = "crates/diesel-sentry", version = "0.1.0" }
 
 # Async runtime
-# Bare minimum tokio features at the workspace level. `signal` is activated
-# only when `muxa-web/graceful-shutdown` is enabled; `macros` /
-# `rt-multi-thread` are enabled by the user's binary, not by our libs.
+# Bare minimum tokio features at the workspace level. muxa-web adds `signal`
+# on native targets (for its ctrl-c handling); `macros` / `rt-multi-thread` are
+# enabled by the user's binary, not by our libs.
 tokio       = { version = "1", features = ["rt", "sync", "time"] }
 tokio-util  = { version = "0.7", features = ["rt"] }
 futures     = "0.3"

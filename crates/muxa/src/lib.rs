@@ -9,7 +9,36 @@
 
 pub use muxa_core::*;
 
-#[cfg(feature = "diesel")]
+// Native-only integrations: their crates aren't even built for wasm (see the
+// target table in Cargo.toml), so say which feature to drop rather than fail
+// on a missing crate.
+#[cfg(all(target_family = "wasm", feature = "otel"))]
+compile_error!(
+    "muxa: the `otel` feature is native-only — on wasm (e.g. Cloudflare Workers) \
+     use `default-features = false, features = [\"web\"]`"
+);
+#[cfg(all(
+    target_family = "wasm",
+    any(feature = "sentry", feature = "sentry-no-tracing")
+))]
+compile_error!("muxa: the `sentry` features are native-only and can't be used on wasm");
+#[cfg(all(
+    target_family = "wasm",
+    any(feature = "sqlx", feature = "sqlx-tls-native", feature = "sqlite")
+))]
+compile_error!(
+    "muxa: the `sqlx`/`sqlite` features are native-only — on Cloudflare Workers, \
+     use a D1 binding instead"
+);
+#[cfg(all(
+    target_family = "wasm",
+    any(feature = "diesel", feature = "diesel-mysql")
+))]
+compile_error!("muxa: the `diesel` features are native-only and can't be used on wasm");
+#[cfg(all(target_family = "wasm", feature = "pgmq"))]
+compile_error!("muxa: the `pgmq` feature is native-only and can't be used on wasm");
+
+#[cfg(all(feature = "diesel", not(target_family = "wasm")))]
 pub use muxa_diesel as diesel;
 #[cfg(feature = "openapi")]
 pub use muxa_openapi as openapi;
@@ -20,13 +49,13 @@ pub use muxa_openapi as openapi;
 // `macros`/`axum-json`/`axum-query` features so the re-export is complete).
 #[cfg(feature = "openapi")]
 pub use muxa_openapi::{aide, schemars};
-#[cfg(feature = "otel")]
+#[cfg(all(feature = "otel", not(target_family = "wasm")))]
 pub use muxa_otel as otel;
-#[cfg(feature = "pgmq")]
+#[cfg(all(feature = "pgmq", not(target_family = "wasm")))]
 pub use muxa_pgmq as pgmq;
-#[cfg(feature = "sentry")]
+#[cfg(all(feature = "sentry", not(target_family = "wasm")))]
 pub use muxa_sentry as sentry;
-#[cfg(feature = "sqlx")]
+#[cfg(all(feature = "sqlx", not(target_family = "wasm")))]
 pub use muxa_sqlx as sqlx;
 #[cfg(feature = "web")]
 pub use muxa_web as web;
@@ -40,31 +69,31 @@ pub mod prelude {
     #[cfg(feature = "web")]
     pub use muxa_web::WebPlugin;
 
-    #[cfg(feature = "ratelimit")]
+    #[cfg(all(feature = "ratelimit", not(target_family = "wasm")))]
     pub use muxa_web::ratelimit::{RateLimitConfig, per_ip_layer};
 
-    #[cfg(feature = "sqlx")]
+    #[cfg(all(feature = "sqlx", not(target_family = "wasm")))]
     pub use muxa_sqlx::{SqlxBackend, SqlxConfig, SqlxPlugin, SqlxPool};
 
-    #[cfg(feature = "sqlite")]
+    #[cfg(all(feature = "sqlite", not(target_family = "wasm")))]
     pub use muxa_sqlx::{SqliteConfig, SqlitePlugin, SqlitePool};
 
-    #[cfg(feature = "diesel")]
+    #[cfg(all(feature = "diesel", not(target_family = "wasm")))]
     pub use muxa_diesel::{DieselBackend, DieselConfig, DieselPlugin, DieselPool};
 
-    #[cfg(feature = "diesel-migrations")]
+    #[cfg(all(feature = "diesel-migrations", not(target_family = "wasm")))]
     pub use muxa_diesel::{EmbeddedMigrations, MigrationsRunner, embed_migrations};
 
-    #[cfg(feature = "diesel-sentry")]
+    #[cfg(all(feature = "diesel-sentry", not(target_family = "wasm")))]
     pub use muxa_diesel::SentryInstrumentation;
 
-    #[cfg(feature = "pgmq")]
+    #[cfg(all(feature = "pgmq", not(target_family = "wasm")))]
     pub use muxa_pgmq::{PgmqConfig, PgmqPlugin};
 
-    #[cfg(feature = "otel")]
+    #[cfg(all(feature = "otel", not(target_family = "wasm")))]
     pub use muxa_otel::{OtelConfig, OtelPlugin, TelemetryHandles};
 
-    #[cfg(feature = "sentry")]
+    #[cfg(all(feature = "sentry", not(target_family = "wasm")))]
     pub use muxa_sentry::{SentryConfig, SentryHandle, SentryPlugin};
 
     #[cfg(feature = "openapi")]

@@ -33,8 +33,10 @@
 
 #[cfg(not(target_family = "wasm"))]
 mod banner;
-#[cfg(feature = "ratelimit")]
+#[cfg(all(feature = "ratelimit", not(target_family = "wasm")))]
 pub mod ratelimit;
+#[cfg(all(feature = "ratelimit", target_family = "wasm"))]
+compile_error!("muxa-web: the `ratelimit` feature is native-only and can't be used on wasm");
 #[cfg(not(target_family = "wasm"))]
 mod serve;
 
