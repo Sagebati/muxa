@@ -90,7 +90,7 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 
 - `web-no-signal`, `sentry-no-tracing` and `sqlx-tls-native` pull in their integration crate, but the facade's re-exports are gated on `web`, `sentry` and `sqlx`, so on their own they expose nothing. For those variants, depend on `muxa-web`, `muxa-sentry` or `muxa-sqlx` directly.
 - `diesel-mysql` only compiles diesel-async's MySQL driver. There is no MySQL plugin yet.
-- On `wasm32-unknown-unknown` (see [Cloudflare Workers](#cloudflare-workers)), `web` and `openapi` are built and checked. `ratelimit`, `otel`, `sentry` and the database integrations are native-only.
+- On `wasm32-unknown-unknown` (see [Cloudflare Workers](#cloudflare-workers)), only `web` and `openapi` are available. `ratelimit`, `otel`, `sentry`, `pgmq` and the database integrations are native-only and fail to compile there with a message naming the feature.
 - The facade does not forward `muxa-otel`'s `http-layer` feature, so `OtelPlugin` used through the facade does not mount the tower-http `TraceLayer`. Adding `muxa-otel` as a direct dependency (its default features include `http-layer`) turns it on.
 
 ## Configuration
@@ -131,6 +131,7 @@ muxa builds for `wasm32-unknown-unknown` and has no Cloudflare dependency. A Wor
 - `WebPlugin` only mounts the routes. There is no serve loop, so the chain ends with `into_router()` instead of `run()`. The chain itself is the same as on a native app.
 - Logs go to the JS console, which is what `wrangler tail` and the dashboard show.
 - Config comes from the Worker's vars and secrets through `App::with_vars`, with the same naming as env vars natively: the var `MUXA_WEB__BANNER` sets `web.banner`. There is no config file.
+- Only the `web` and `openapi` features are available. The others are native-only and fail to compile on wasm with a message naming the feature.
 - Background tasks aren't supported. `into_router()` returns an error if a plugin registered one. Use a Cron Trigger (`#[event(scheduled)]`) instead.
 
 ```toml
@@ -189,18 +190,41 @@ async fn fetch(
 }
 ```
 
-Handlers reach bindings (D1, KV, secrets) through `Extension<Env>`. Bindings are JS objects that can't be sent between threads, while axum requires `Send` futures, so mark any handler that awaits one with `#[worker::send]`:
+The `fetch` handler is yours: muxa doesn't depend on `worker`, so you choose its version. This one builds the app on the first request an isolate serves and reuses the router after that; concurrent first requests share that one build, and a failed build isn't cached. It applies the Worker's `RUST_LOG` var to the log levels, since wasm has no process environment, and puts each request's `Env` into its extensions for handlers that read it as `Extension<Env>`.
+
+### Bindings as app state
+
+A binding (D1, KV, R2, …) can join the chain like any plugin resource. `Local` makes the JS handle usable as state: a Worker runs each isolate on a single thread, and `Local` checks that at runtime, so touching the handle from another thread panics instead of being undefined behaviour. `Provide` puts the value on the state:
 
 ```rust
-use axum::extract::Extension;
-use axum::http::StatusCode;
+type Db = Local<worker::D1Database>;
+
+fn routes<S, Idx>(state: &S) -> Router
+where
+    S: Selector<Db, Idx>,
+{
+    let db: Db = state.select().dupe();
+    Router::new().route("/count", get(count)).with_state(db)
+}
 
 #[worker::send]
-async fn count(Extension(env): Extension<Env>) -> Result<String, StatusCode> {
-    let db = env.d1("DB").map_err(|_err| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // ...
+async fn count(axum::extract::State(db): axum::extract::State<Db>) -> String {
+    // db.prepare("SELECT …").first(None).await …
+}
+
+async fn app(env: &Env) -> muxa::Result<Router> {
+    let db = env.d1("DB").map_err(|err| muxa::Error::other(err.to_string()))?;
+    let (router, _state) = App::with_vars(Vars::from_js(env.as_ref()))
+        .with_plugin(Provide(Local::new(db))).await?
+        .with_plugin(WebPlugin::new(routes)).await?
+        .into_router()?;
+    Ok(router)
 }
 ```
+
+The handle comes from the first request's `Env` and is kept for the isolate's lifetime. Bindings don't change between requests in an isolate, so that is sound.
+
+The futures that JS calls return aren't `Send`, while axum requires `Send` handlers, so mark any handler that awaits a binding with `#[worker::send]`.
 
 The prelude's `State` trait has the same name as axum's `State` extractor. Use the extractor as `axum::extract::State` when you need both.
 

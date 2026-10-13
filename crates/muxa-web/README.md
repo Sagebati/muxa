@@ -161,7 +161,7 @@ Things to know:
 
 | Feature | Default | Effect |
 |---|---|---|
-| `graceful-shutdown` | yes | ctrl-c handling (`tokio/signal`) |
+| `graceful-shutdown` | yes | ctrl-c handling. tokio's `signal` feature is compiled in on native targets either way |
 | `openapi` | | `ApiPlugin` |
 | `ratelimit` | | the `ratelimit` module |
 

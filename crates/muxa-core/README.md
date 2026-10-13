@@ -121,12 +121,13 @@ To add a provider, define a marker type in the provider crate and implement `PgB
 | `ctx.telemetry.add_layer(layer)` | attach a `tracing` layer to the shared subscriber ([`muxa-telemetry`](../muxa-telemetry)) |
 | `ctx.telemetry.exclude_targets(&[..])` | hide the crates on an exporter's own network path from plugin layers |
 | `ctx.set_serve_fn(f)` | register the serve loop. Only one plugin may; a second call is an error |
+| `ctx.mark_terminal(name)` | declare the plugin that owns the app's routes (the web plugin), on every target. Only one plugin may |
 
 The configuration is not in `BuildCtx`. A plugin gets its own section as the `cfg` argument of `build` and nothing else.
 
 `App::run()` spawns the tasks, composes the router and calls the serve function. When serving ends it cancels the shutdown token and waits up to ten seconds for the tasks to return, so a task can flush or drain before the process exits. With no serve function registered, which means no serving plugin in the chain, it returns an error.
 
-`AppBuilder::into_router()` is the other way to finish a chain, for hosts that call the router themselves instead of running a serve loop: Cloudflare Workers (see the [facade README](../muxa#cloudflare-workers)), serverless adapters, or tests driving it as a `tower::Service`. It composes the router and returns it with the final state. The chain is the same as for `run()`: a serve loop the web plugin registered is simply not started. Such hosts have nowhere to run background tasks, so `into_router()` returns an error if any are registered. It is also an error if no plugin mounted any routes, which usually means the web plugin is missing from the chain.
+`AppBuilder::into_router()` is the other way to finish a chain, for hosts that call the router themselves instead of running a serve loop: Cloudflare Workers (see the [facade README](../muxa#cloudflare-workers)), serverless adapters, or tests driving it as a `tower::Service`. It composes the router and returns it with the final state. The chain is the same as for `run()`: a serve loop the web plugin registered is simply not started. Such hosts have nowhere to run background tasks, so `into_router()` returns an error if any are registered. It is also an error if no plugin called `ctx.mark_terminal`, which means the web plugin is missing: other plugins' routes alone would 404 every app request.
 
 The shutdown token goes away with the build context, uncancelled. To run the tasks yourself, keep the token and take the tasks first, then cancel the token when your host stops:
 
@@ -139,6 +140,10 @@ shutdown.cancel();
 ```
 
 On `wasm32` targets `run()` is compiled out and `into_router()` is the only way to finish.
+
+## Provide and Local
+
+`Provide(value)` is a plugin that pushes a value you already have onto the state, where later plugins and the routes callback reach it with `Selector`. On wasm, `Local<T>` lets a value that isn't `Send` or `Sync`, such as a Worker's D1 or KV handle, be that value: `Provide(Local::new(env.d1("DB")?))`. A Worker runs on one thread; `Local` checks that at runtime and panics if the value is touched from another, rather than allowing undefined behaviour. It clones cheaply and derefs to the value.
 
 Creating an `App` also installs the global `tracing` subscriber (stdout, filtered by `RUST_LOG`, default `info`), unless one is already installed.
 
@@ -161,7 +166,7 @@ Config is a [figment](https://docs.rs/figment) built from two layers, last one w
 
 The prefix includes its trailing separator: `"MYAPP_"`, not `"MYAPP"`.
 
-`Vars` is for hosts with no process environment and no file, chiefly Cloudflare Workers. It is a figment provider over string variables: `Vars::from_pairs(...)`, or on wasm `Vars::from_js(env.as_ref())`, which reads a Worker's vars and secrets. `with_vars` applies the env-var convention to them, so `MUXA_PGMQ__URL` sets `pgmq.url`. Its `Debug` output lists names only, since values may be secrets.
+`Vars` is for hosts with no process environment and no file, chiefly Cloudflare Workers. It is a figment provider over string variables: `Vars::from_pairs(...)`, or on wasm `Vars::from_js(env.as_ref())`, which reads a Worker's vars and secrets, including number and boolean vars (as their text, like env vars). `with_vars` applies the env-var convention to them, so `MUXA_PGMQ__URL` sets `pgmq.url`. Its `Debug` output lists names only, since values may be secrets.
 
 The application owns the merged configuration and can read any of it, for settings that belong to no plugin:
 
