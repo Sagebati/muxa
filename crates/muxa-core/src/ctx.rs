@@ -49,6 +49,8 @@ pub struct BuildCtx {
     /// to the global subscriber immediately via a reload handle.
     pub telemetry: muxa_telemetry::TelemetryRegistry,
     pub(crate) serve_fn: Option<ServeFn>,
+    /// The plugin that took the app's routes; see [`BuildCtx::mark_terminal`].
+    pub(crate) terminal: Option<&'static str>,
 }
 
 impl BuildCtx {
@@ -62,6 +64,7 @@ impl BuildCtx {
             shutdown: ShutdownToken::new(),
             telemetry: muxa_telemetry::TelemetryRegistry::install(),
             serve_fn: None,
+            terminal: None,
         }
     }
 
@@ -79,6 +82,27 @@ impl BuildCtx {
             ));
         }
         self.serve_fn = Some(serve_fn);
+        Ok(())
+    }
+
+    /// Declare `plugin` the chain's terminal plugin: the one that mounts the
+    /// application's routes, added last (the web plugin). Called on every
+    /// target, serve loop or not, so that
+    /// [`AppBuilder::into_router`](crate::AppBuilder::into_router) can tell a
+    /// complete chain from one missing its web plugin — which would otherwise
+    /// still compose, with only other plugins' routes, and 404 every app
+    /// request.
+    ///
+    /// # Errors
+    ///
+    /// When another plugin already marked itself terminal.
+    pub fn mark_terminal(&mut self, plugin: &'static str) -> Result<()> {
+        if let Some(previous) = self.terminal {
+            return Err(crate::Error::other(format!(
+                "{plugin} and {previous} both own the app's routes — keep one of them, last in the chain"
+            )));
+        }
+        self.terminal = Some(plugin);
         Ok(())
     }
 }

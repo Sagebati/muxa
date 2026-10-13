@@ -157,9 +157,9 @@ impl<S: State> AppBuilder<S> {
     ///
     /// Such hosts have nowhere to run background tasks, so tasks registered
     /// via [`TaskRegistry::spawn`](crate::TaskRegistry::spawn) are an
-    /// **error** here rather than being silently dropped. So is a chain that
-    /// mounted no routes — every request would be a 404 — which usually means
-    /// the web plugin is missing.
+    /// **error** here rather than being silently dropped. So is a chain with
+    /// no terminal plugin ([`BuildCtx::mark_terminal`] — the web plugin), as
+    /// every app request would be a 404.
     ///
     /// The shutdown token goes away with the build context, uncancelled. A
     /// caller that can run the tasks itself keeps a handle to the token,
@@ -185,10 +185,10 @@ impl<S: State> AppBuilder<S> {
                 self.ctx.tasks.names().collect::<Vec<_>>().join(", "),
             )));
         }
-        if self.ctx.router.mounts().next().is_none() {
+        if self.ctx.terminal.is_none() {
             return Err(Error::other(
-                "into_router() found no routes — add a web plugin (e.g. WebPlugin) \
-                 as the last plugin in the chain",
+                "into_router() found no web plugin — add one (e.g. WebPlugin) \
+                 as the last plugin in the chain, to mount the app's routes",
             ));
         }
         Ok((self.ctx.router.compose(), self.state))
@@ -382,6 +382,7 @@ mod tests {
                     |shutdown| async move { shutdown.cancelled().await },
                 );
             }
+            ctx.mark_terminal("RoutePlugin")?;
             // `into_router` must drop this rather than fail: the same chain
             // finishes with `run()` or `into_router()`.
             ctx.set_serve_fn(Box::new(|_router| {
@@ -427,15 +428,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn into_router_without_routes_is_an_error() {
+    async fn into_router_without_a_web_plugin_is_an_error() {
+        /// Mounts routes like a docs plugin does, without being terminal.
+        struct DocsPlugin;
+        impl<S: State> Plugin<S> for DocsPlugin {
+            type Output = ();
+            type Config = ();
+            const CONFIG_PREFIX: &'static str = "";
+
+            async fn build(self, _cfg: (), _state: &S, ctx: &mut BuildCtx) -> Result<()> {
+                ctx.router.mount(
+                    "/docs",
+                    axum::Router::new().route("/", axum::routing::get(|| async { "docs" })),
+                );
+                Ok(())
+            }
+        }
+
+        // Routes are mounted, but none of the app's: still an error.
         let err = AppBuilder::<HNil>::with_figment(Figment::new())
-            .with_plugin(AnswerPlugin)
+            .with_plugin(DocsPlugin)
             .await
             .unwrap()
             .into_router()
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("no routes"), "{err}");
+        assert!(err.to_string().contains("no web plugin"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn two_terminal_plugins_are_an_error() {
+        let Err(err) = AppBuilder::<HNil>::with_figment(Figment::new())
+            .with_plugin(RoutePlugin { with_task: false })
+            .await
+            .unwrap()
+            .with_plugin(RoutePlugin { with_task: false })
+            .await
+        else {
+            panic!("a second terminal plugin was accepted");
+        };
+        assert!(
+            format!("{err:?}").contains("both own the app's routes"),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]

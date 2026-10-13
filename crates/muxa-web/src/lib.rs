@@ -130,6 +130,7 @@ where
         // the resulting router at the root for compose-time merging.
         let user_router = (self.routes)(state);
         ctx.router.mount("/", user_router);
+        ctx.mark_terminal("WebPlugin")?;
         schedule_serve(cfg, ctx)
     }
 }
@@ -226,6 +227,7 @@ where
         ctx.router
             .mount("/", muxa_openapi::docs_router(&api, &cfg.openapi)?);
 
+        ctx.mark_terminal("ApiPlugin")?;
         schedule_serve(cfg.web, ctx)
     }
 }
