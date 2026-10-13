@@ -228,6 +228,8 @@ The futures that JS calls return aren't `Send`, while axum requires `Send` handl
 
 The prelude's `State` trait has the same name as axum's `State` extractor. Use the extractor as `axum::extract::State` when you need both.
 
+[`examples/worker-guestbook`](../../examples/worker-guestbook) puts all of this together: a JSON API on D1 with an app plugin, vars config, a Cron Trigger and a `wrangler.toml`. `just worker-example` runs it locally.
+
 ## Examples
 
 Run from the workspace root.

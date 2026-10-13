@@ -1,0 +1,27 @@
+[package]
+name = "worker-guestbook"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "muxa on Cloudflare Workers: a guestbook JSON API on D1"
+
+# Not a workspace member: it builds for wasm32-unknown-unknown only, and
+# depends on workers-rs, which muxa itself never does.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# In your project: muxa = { git = "https://github.com/Sagebati/muxa", ... }
+muxa    = { path = "../../crates/muxa", default-features = false, features = ["web"] }
+worker  = { version = "0.8", features = ["http", "d1"] }
+axum    = { version = "0.8", default-features = false, features = ["json"] }
+tokio   = { version = "1", default-features = false, features = ["sync"] }
+tower   = { version = "0.5", default-features = false }
+serde   = { version = "1", features = ["derive"] }
+tracing = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
