@@ -62,6 +62,8 @@ type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
 type LayersHandle = reload::Handle<Vec<BoxedLayer>, Registry>;
 /// Targets hidden from plugin layers; shared with the slot's filter.
 type Excluded = Arc<RwLock<Vec<String>>>;
+/// Swaps in a new level filter for one of the subscriber's outputs.
+type SetLevel = Box<dyn Fn(EnvFilter) -> Result<(), reload::Error> + Send + Sync>;
 
 /// The process-wide plugin-layer slot.
 struct Slot {
@@ -70,6 +72,8 @@ struct Slot {
     /// it, both only ever changed under this lock.
     kinds: Mutex<Vec<TypeId>>,
     excluded: Excluded,
+    /// One per filtered output: the plugin slot, and `fmt` where it exists.
+    levels: Vec<SetLevel>,
 }
 
 /// Decided by the first [`TelemetryRegistry::install`]: the slot, or `None`
@@ -97,10 +101,10 @@ fn in_crate(target: &str, krate: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
 }
 
-/// The filter in front of every plugin layer: the `RUST_LOG` levels (so the
-/// layers honour the same levels as `fmt`) minus the excluded targets.
-fn plugin_filter(excluded: Excluded) -> impl Filter<Registry> {
-    level_filter().and(filter::filter_fn(move |metadata| {
+/// The filter in front of every plugin layer: the levels (so the layers
+/// honour the same levels as `fmt`) minus the excluded targets.
+fn plugin_filter(levels: impl Filter<Registry>, excluded: Excluded) -> impl Filter<Registry> {
+    levels.and(filter::filter_fn(move |metadata| {
         !is_excluded(&excluded, metadata.target())
     }))
 }
@@ -112,20 +116,30 @@ fn install_subscriber() -> Option<Slot> {
     // One reload slot: a stack of boxed plugin layers, sitting directly on
     // Registry. fmt is generic and layers freely on top.
     let (layers_slot, layers) = reload::Layer::new(Vec::<BoxedLayer>::new());
+    // The levels are reloadable so `set_level` can change them after install
+    // — the only way to set them where there is no `RUST_LOG` (wasm).
+    let (slot_levels, slot_levels_handle) = reload::Layer::new(level_filter());
+    let levels: Vec<SetLevel> = vec![Box::new(move |filter| slot_levels_handle.reload(filter))];
 
     // Filter the whole slot once, *here* at build time — so the `Filtered`
     // layer is registered with the subscriber and gets a `FilterId`.
     // (A per-layer filter on a reload-*injected* layer panics: it never
     // receives a FilterId.)
     let subscriber = tracing_subscriber::registry()
-        .with(layers_slot.with_filter(plugin_filter(Arc::clone(&excluded))));
+        .with(layers_slot.with_filter(plugin_filter(slot_levels, Arc::clone(&excluded))));
 
     // wasm has no stdout and no clock (`fmt`'s timestamp panics on
     // wasm32-unknown-unknown), so there the subscriber is the plugin slot
     // alone; the host plugin (e.g. muxa-worker's console layer) adds the
     // output layer through `add_layer`.
     #[cfg(not(target_family = "wasm"))]
-    let subscriber = subscriber.with(tracing_subscriber::fmt::layer().with_filter(level_filter()));
+    let (subscriber, levels) = {
+        let (fmt_levels, fmt_levels_handle) = reload::Layer::new(level_filter());
+        let mut levels = levels;
+        levels.push(Box::new(move |filter| fmt_levels_handle.reload(filter)));
+        let subscriber = subscriber.with(tracing_subscriber::fmt::layer().with_filter(fmt_levels));
+        (subscriber, levels)
+    };
 
     subscriber.try_init().ok()?;
 
@@ -133,6 +147,7 @@ fn install_subscriber() -> Option<Slot> {
         layers,
         kinds: Mutex::new(Vec::new()),
         excluded,
+        levels,
     })
 }
 
@@ -211,7 +226,8 @@ impl TelemetryRegistry {
     }
 
     /// Hide events and spans of these crates from every plugin layer. They
-    /// still reach the `fmt` output. A target matches a crate when it is the
+    /// still reach the `fmt` output — except on wasm, which has no `fmt`
+    /// layer, so there they are hidden everywhere. A target matches a crate when it is the
     /// crate or one of its modules: `"hyper"` covers `hyper::client`, but not
     /// `hyper_util` — name each crate on the path.
     ///
@@ -236,6 +252,33 @@ impl TelemetryRegistry {
         // changed, so make them ask again. (After the write guard is dropped —
         // rebuilding calls the filter, which takes the read lock.)
         tracing::callsite::rebuild_interest_cache();
+    }
+
+    /// Replace the levels, for the plugin layers and `fmt` alike, with
+    /// `RUST_LOG`-style `directives` (e.g. `"info,my_app=debug"`).
+    ///
+    /// At install the levels come from `RUST_LOG` (default `info`). Use this
+    /// where there is no process environment to read it from — a Worker
+    /// reads its own `RUST_LOG` var and passes it here.
+    ///
+    /// No-op when no subscriber is installed.
+    ///
+    /// # Errors
+    ///
+    /// When `directives` don't parse; the levels are then left unchanged.
+    pub fn set_level(&self, directives: &str) -> Result<(), filter::ParseError> {
+        // Parse once up front so a bad string changes nothing.
+        EnvFilter::try_new(directives)?;
+        let Some(slot) = self.slot else { return Ok(()) };
+        for set in &slot.levels {
+            // `EnvFilter` isn't `Clone`: parse a fresh one per output. Reload
+            // only fails if the subscriber is gone, and then there is nothing
+            // left to filter.
+            if let Ok(filter) = EnvFilter::try_new(directives) {
+                let _ = set(filter);
+            }
+        }
+        Ok(())
     }
 }
 
