@@ -68,6 +68,7 @@ type LayersHandle = reload::Handle<Vec<BoxedLayer>, Registry>;
 /// Targets hidden from plugin layers; shared with the slot's filter.
 type Excluded = Arc<RwLock<Vec<String>>>;
 /// Swaps in a new level filter for one of the subscriber's outputs.
+#[cfg(target_family = "wasm")]
 type SetLevel = Box<dyn Fn(EnvFilter) -> Result<(), reload::Error> + Send + Sync>;
 
 /// The process-wide plugin-layer slot.
@@ -77,8 +78,8 @@ struct Slot {
     /// it, both only ever changed under this lock.
     kinds: Mutex<Vec<TypeId>>,
     excluded: Excluded,
-    /// One per filtered output: the plugin slot and `fmt` (the JS console on
-    /// wasm).
+    /// One per filtered output: the plugin slot and the JS console.
+    #[cfg(target_family = "wasm")]
     levels: Vec<SetLevel>,
 }
 
@@ -122,14 +123,22 @@ fn install_subscriber() -> Option<Slot> {
     // One reload slot: a stack of boxed plugin layers, sitting directly on
     // Registry. fmt is generic and layers freely on top.
     let (layers_slot, layers) = reload::Layer::new(Vec::<BoxedLayer>::new());
-    // The levels are reloadable so `set_level` can change them after install
-    // — the only way to set them where there is no `RUST_LOG` (wasm).
-    let (slot_levels, slot_levels_handle) = reload::Layer::new(level_filter());
-    let (output_levels, output_levels_handle) = reload::Layer::new(level_filter());
-    let levels: Vec<SetLevel> = vec![
-        Box::new(move |filter| slot_levels_handle.reload(filter)),
-        Box::new(move |filter| output_levels_handle.reload(filter)),
-    ];
+
+    // Natively the levels are fixed by `RUST_LOG`: plain filters, no lock on
+    // the hot path. On wasm there is no `RUST_LOG` to read, so the levels are
+    // reloadable for `set_level`.
+    #[cfg(not(target_family = "wasm"))]
+    let (slot_levels, output_levels) = (level_filter(), level_filter());
+    #[cfg(target_family = "wasm")]
+    let (slot_levels, output_levels, levels) = {
+        let (slot_levels, slot_handle) = reload::Layer::new(level_filter());
+        let (output_levels, output_handle) = reload::Layer::new(level_filter());
+        let levels: Vec<SetLevel> = vec![
+            Box::new(move |filter| slot_handle.reload(filter)),
+            Box::new(move |filter| output_handle.reload(filter)),
+        ];
+        (slot_levels, output_levels, levels)
+    };
 
     // Filter the whole slot once, *here* at build time — so the `Filtered`
     // layer is registered with the subscriber and gets a `FilterId`.
@@ -155,6 +164,7 @@ fn install_subscriber() -> Option<Slot> {
         layers,
         kinds: Mutex::new(Vec::new()),
         excluded,
+        #[cfg(target_family = "wasm")]
         levels,
     })
 }
@@ -261,31 +271,108 @@ impl TelemetryRegistry {
         tracing::callsite::rebuild_interest_cache();
     }
 
-    /// Replace the levels, for the plugin layers and `fmt` alike, with
+    /// Replace the levels, for the plugin layers and the console alike, with
     /// `RUST_LOG`-style `directives` (e.g. `"info,my_app=debug"`).
     ///
-    /// At install the levels come from `RUST_LOG` (default `info`). Use this
-    /// where there is no process environment to read it from — a Worker
-    /// reads its own `RUST_LOG` var and passes it here.
-    ///
-    /// No-op when no subscriber is installed.
+    /// wasm only. Natively the levels come from `RUST_LOG` and are fixed, so
+    /// filtering takes no lock. On wasm there is no process environment to
+    /// read `RUST_LOG` from — a Worker reads its own `RUST_LOG` var and passes
+    /// it here.
     ///
     /// # Errors
     ///
-    /// When `directives` don't parse; the levels are then left unchanged.
-    pub fn set_level(&self, directives: &str) -> Result<(), filter::ParseError> {
-        // Parse once up front so a bad string changes nothing.
-        EnvFilter::try_new(directives)?;
-        let Some(slot) = self.slot else { return Ok(()) };
+    /// [`SetLevelError::Invalid`] when `directives` don't parse;
+    /// [`SetLevelError::Detached`] when this registry isn't attached to the
+    /// subscriber (the application installed its own first). Either way the
+    /// levels are left unchanged.
+    #[cfg(target_family = "wasm")]
+    pub fn set_level(&self, directives: &str) -> Result<(), SetLevelError> {
+        let parsed = levels::parse(directives).map_err(SetLevelError::Invalid)?;
+        let slot = self.slot.ok_or(SetLevelError::Detached)?;
         for set in &slot.levels {
-            // `EnvFilter` isn't `Clone`: parse a fresh one per output. Reload
-            // only fails if the subscriber is gone, and then there is nothing
-            // left to filter.
-            if let Ok(filter) = EnvFilter::try_new(directives) {
-                let _ = set(filter);
-            }
+            // Reload only fails if the subscriber is gone, and then there is
+            // nothing left to filter.
+            let _ = set(levels::filter(&parsed));
         }
         Ok(())
+    }
+}
+
+/// Why [`TelemetryRegistry::set_level`] left the levels unchanged.
+#[cfg(target_family = "wasm")]
+#[derive(Debug)]
+pub enum SetLevelError {
+    /// The directives don't parse.
+    Invalid(filter::ParseError),
+    /// The registry isn't attached to the subscriber: the application
+    /// installed its own, whose levels muxa doesn't control.
+    Detached,
+}
+
+#[cfg(target_family = "wasm")]
+impl core::fmt::Display for SetLevelError {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Invalid(err) => write!(fmt, "invalid log level directives: {err}"),
+            Self::Detached => fmt.write_str(
+                "the application installed its own tracing subscriber; set its levels there",
+            ),
+        }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl std::error::Error for SetLevelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(err) => Some(err),
+            Self::Detached => None,
+        }
+    }
+}
+
+/// Parse `RUST_LOG`-style directives once, then build as many filters from
+/// them as there are outputs (`EnvFilter` isn't `Clone`, `Directive` is).
+#[cfg(any(test, target_family = "wasm"))]
+mod levels {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::filter::{Directive, ParseError};
+
+    /// Split and parse like `EnvFilter`'s own parser: on `,`, skipping
+    /// empty entries.
+    pub fn parse(directives: &str) -> Result<Vec<Directive>, ParseError> {
+        directives
+            .split(',')
+            .filter(|directive| !directive.is_empty())
+            .map(str::parse)
+            .collect()
+    }
+
+    pub fn filter(directives: &[Directive]) -> EnvFilter {
+        directives
+            .iter()
+            .cloned()
+            .fold(EnvFilter::default(), EnvFilter::add_directive)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parsing_once_builds_the_same_filter_as_envfilter() {
+            for directives in [
+                "",
+                "debug",
+                "info,my_app=debug",
+                "warn,,hyper=off,a::b[span]=trace",
+            ] {
+                let ours = filter(&parse(directives).unwrap()).to_string();
+                let theirs = EnvFilter::try_new(directives).unwrap().to_string();
+                assert_eq!(ours, theirs, "{directives:?}");
+            }
+            assert!(parse("=[").is_err());
+        }
     }
 }
 

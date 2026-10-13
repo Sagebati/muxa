@@ -55,16 +55,4 @@ fn plugin_layers_share_one_slot() {
     detached.add_layer(Counting(Arc::new(AtomicUsize::new(0))));
     tracing::info!("still one layer");
     assert_eq!(seen_by_new.load(Ordering::SeqCst), 4);
-
-    // The levels can be changed after install, for hosts with no RUST_LOG.
-    tracing::debug!("below the default level");
-    assert_eq!(seen_by_new.load(Ordering::SeqCst), 4);
-    second.set_level("debug").unwrap();
-    tracing::debug!("now let through");
-    assert_eq!(seen_by_new.load(Ordering::SeqCst), 5);
-
-    // Directives that don't parse are an error and change nothing.
-    assert!(second.set_level("=[").is_err());
-    tracing::debug!("still let through");
-    assert_eq!(seen_by_new.load(Ordering::SeqCst), 6);
 }
