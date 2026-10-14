@@ -12,5 +12,10 @@ repository.workspace = true
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "registry", "std"] }
 
+# wasm: events go to the JS console in place of `fmt` (no stdout there).
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = { workspace = true }
+web-sys      = { workspace = true, features = ["console"] }
+
 [lints]
 workspace = true

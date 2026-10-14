@@ -25,6 +25,8 @@ async fn main() -> muxa::Result<()> {
 
 Add it last. The routes callback is called with the app state at the point the plugin is added, so everything it needs has to be in the chain already. `WebPlugin` also registers the serve loop, and only one plugin can do that.
 
+On wasm (Cloudflare Workers) there is no serve loop: `WebPlugin` only mounts the routes, and the chain ends with `into_router()`, whose router the Worker calls itself. See the [facade README](../muxa#cloudflare-workers). `ApiPlugin` works there too. `ratelimit` and ctrl-c handling are native-only.
+
 ### The routes callback
 
 The callback is `FnOnce(&S) -> Router`. Three forms work:
@@ -159,7 +161,7 @@ Things to know:
 
 | Feature | Default | Effect |
 |---|---|---|
-| `graceful-shutdown` | yes | ctrl-c handling (`tokio/signal`) |
+| `graceful-shutdown` | yes | ctrl-c handling. tokio's `signal` feature is compiled in on native targets either way |
 | `openapi` | | `ApiPlugin` |
 | `ratelimit` | | the `ratelimit` module |
 

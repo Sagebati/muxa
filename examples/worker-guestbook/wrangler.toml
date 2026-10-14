@@ -1,0 +1,23 @@
+name = "worker-guestbook"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-10-01"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+# Config, with the same naming as muxa's env vars: MUXA_GUESTBOOK__TITLE sets
+# guestbook.title. Numbers and booleans work as-is.
+[vars]
+MUXA_GUESTBOOK__TITLE   = "Sign our guestbook"
+MUXA_GUESTBOOK__MAX_LEN = 280
+RUST_LOG                = "info,worker_guestbook=debug"
+
+[[d1_databases]]
+binding        = "DB"
+database_name  = "guestbook"
+database_id    = "00000000-0000-0000-0000-000000000000" # `wrangler d1 create guestbook`
+migrations_dir = "migrations"
+
+# Periodic work runs as a Cron Trigger: Workers have no background tasks.
+[triggers]
+crons = ["0 3 * * *"]

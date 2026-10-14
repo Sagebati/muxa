@@ -68,16 +68,20 @@ muxa-openapi = { path = "crates/muxa-openapi", version = "0.1.0", default-featur
 diesel-sentry = { path = "crates/diesel-sentry", version = "0.1.0" }
 
 # Async runtime
-# Bare minimum tokio features at the workspace level. `signal` is activated
-# only when `muxa-web/graceful-shutdown` is enabled; `macros` /
-# `rt-multi-thread` are enabled by the user's binary, not by our libs.
+# Bare minimum tokio features at the workspace level. muxa-web adds `signal`
+# on native targets (for its ctrl-c handling); `macros` / `rt-multi-thread` are
+# enabled by the user's binary, not by our libs.
 tokio       = { version = "1", features = ["rt", "sync", "time"] }
 tokio-util  = { version = "0.7", features = ["rt"] }
 futures     = "0.3"
 pin-project-lite = "0.2"
 
 # HTTP & middleware
-axum        = "0.8"
+# No default features: axum's `tokio`/`http1` defaults pull hyper-util's server →
+# tokio `net` → mio, which does not build for wasm32-unknown-unknown. muxa-web,
+# the native web path, turns all of axum's defaults back on; wasm crates enable
+# only what they use.
+axum        = { version = "0.8", default-features = false }
 tower       = { version = "0.5", features = ["util"] }
 tower-http  = { version = "0.6", features = ["trace"] }
 http        = "1"
@@ -86,6 +90,16 @@ http        = "1"
 # tower_governor builds against so its middleware types unify.
 tower_governor = "0.8"
 governor = "0.10"
+
+# JS interop on wasm targets (no Cloudflare dependency): muxa-telemetry writes
+# to the JS console, muxa-core reads config from a JS object (a Worker's Env).
+# Same 0.2/0.3 lines as workers-rs, so they unify with an app's `worker` dep.
+js-sys       = "0.3"
+wasm-bindgen = "0.2"
+web-sys      = "0.3"
+# `muxa_core::Local`: JS handles as `Send + Sync` state on single-threaded wasm,
+# with a runtime check instead of `unsafe` in our code.
+send_wrapper = "0.6"
 
 # Database
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),

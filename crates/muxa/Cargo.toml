@@ -19,7 +19,10 @@ default = ["web", "otel"]
 # a build error.
 # ---------------------------------------------------------------------------
 
-# Web (axum serve loop + graceful shutdown).
+# Web (axum serve loop + graceful shutdown). Also the wasm path (Cloudflare
+# Workers): there `WebPlugin` only mounts routes and the host drives the router
+# from `into_router()`. On wasm only `web` and `openapi` are available — build
+# with `default-features = false`, since `otel` is native-only.
 web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
 web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
@@ -88,18 +91,30 @@ full = [
 [dependencies]
 muxa-core   = { workspace = true }
 muxa-web    = { workspace = true, optional = true }
+muxa-openapi = { workspace = true, optional = true }
+
+# Native-only integrations, each checked on wasm32-unknown-unknown: sqlx,
+# sqlite and diesel (and pgmq, whose plugin needs one of them) open sockets
+# through tokio `net`, which pulls mio, and mio has no wasm support. otel's
+# OTLP exporters don't build (gRPC: mio; HTTP: opentelemetry-http needs `Send`
+# futures and reqwest's wasm ones aren't), so on wasm it could only be a no-op.
+# sentry's transport doesn't build (it calls reqwest APIs wasm lacks, and
+# sentry-contexts needs libc's `uname`). Declared for native targets only, so
+# on wasm their features pull nothing and `src/lib.rs` reports them with a
+# `compile_error!` instead of an error from deep inside a dependency.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 muxa-sqlx   = { workspace = true, optional = true }
 muxa-diesel = { workspace = true, optional = true }
 muxa-pgmq   = { workspace = true, optional = true }
 muxa-otel   = { workspace = true, optional = true }
 muxa-sentry = { workspace = true, optional = true }
-muxa-openapi = { workspace = true, optional = true }
 
 # Examples live in `examples/` and are auto-discovered by cargo (run with
 # `cargo run --example <name>`); these are the deps they pull in.
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-axum  = { workspace = true }
+# Examples use the JSON extractor/response on top of the bare router.
+axum  = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 # `diesel_widgets` example: schema/derives + async query execution. The
 # `embed_migrations!` macro expands to absolute `diesel_migrations::` paths,

@@ -25,8 +25,19 @@ test:
 test-pgmq:
     cargo test -p muxa-pgmq --features sqlx,diesel-async --tests
 
-# fmt-check + lint + tests + pgmq capability tests. What CI should run.
-check: fmt-check lint test test-pgmq
+# Check the crates that must build for Cloudflare Workers (wasm32).
+# Needs `rustup target add wasm32-unknown-unknown`.
+check-wasm:
+    cargo clippy -p muxa-core -p muxa-telemetry -p muxa-web --no-deps --target wasm32-unknown-unknown -- -D warnings
+    cargo check -p muxa --no-default-features --features web,openapi --target wasm32-unknown-unknown
+    cargo clippy --manifest-path examples/worker-guestbook/Cargo.toml --target-dir target --target wasm32-unknown-unknown -- -D warnings
+
+# Run the Cloudflare Workers example locally (needs wrangler: `npx wrangler`).
+worker-example:
+    cd examples/worker-guestbook && npx wrangler d1 migrations apply guestbook --local && npx wrangler dev
+
+# fmt-check + lint + tests + pgmq capability tests + wasm build. What CI should run.
+check: fmt-check lint test test-pgmq check-wasm
     @echo "✔ check passed"
 
 # Build the workspace in dev mode.

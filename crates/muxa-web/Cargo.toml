@@ -13,8 +13,13 @@ repository.workspace = true
 # manage your own signal handling and just want the bind/serve loop.
 default = ["graceful-shutdown"]
 
-# `tokio::signal::ctrl_c` bridge into the shutdown token.
-graceful-shutdown = ["tokio/signal"]
+# `tokio::signal::ctrl_c` bridge into the shutdown token; a no-op on wasm,
+# which has no serve loop. Turning it off removes the bridge but not tokio's
+# `signal` feature: that comes from the native-only table below, always on.
+# It can't follow this feature — a feature enabling `tokio/signal` enables it
+# on every target (wasm included, where it doesn't build), and Cargo rejects a
+# renamed second dependency on tokio.
+graceful-shutdown = []
 
 # Aide-aware web plugin (`ApiPlugin`): finishes an `aide::axum::ApiRouter` into
 # routes + an OpenAPI document and serves the spec/docs via muxa-openapi.
@@ -23,6 +28,8 @@ openapi = ["dep:aide", "dep:muxa-openapi"]
 # Per-IP rate limiting layer (`ratelimit` module). tower_governor's `axum`
 # feature enables peer-IP extraction from `ConnectInfo`; `governor` supplies the
 # middleware type the layer is named with. (tokio rt+time come from the base dep.)
+# Native only: tower_governor pulls tokio `net`, which doesn't build for wasm,
+# so both are native-only dependencies and the feature is a compile error there.
 ratelimit = ["dep:tower_governor", "tower_governor/axum", "dep:governor"]
 
 [dependencies]
@@ -30,20 +37,34 @@ muxa-core   = { workspace = true }
 # aide finish + OpenAPI doc; only when the `openapi` feature is on.
 aide         = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
-# Pull `tokio` without `signal` by default; the feature adds it back.
 tokio       = { workspace = true }
 tokio-util  = { workspace = true }
 futures     = { workspace = true }
-axum        = { workspace = true }
+# The workspace pin turns axum's default features off so muxa-core builds for
+# wasm. Turn back on every default that builds there: `tracing` logs
+# rejections; `matched-path`/`original-uri` are what route-aware middleware
+# reads; `json`/`query`/`form` are the extractors apps expect from plain axum.
+# The serve-loop features (`tokio`, `http1`) are native-only, below.
+axum        = { workspace = true, features = [
+    "form", "json", "matched-path", "original-uri", "query", "tower-log", "tracing",
+] }
 tower       = { workspace = true }
-# Per-IP rate limiting; only when the `ratelimit` feature is on. `governor` is
-# the underlying GCRA limiter (needed to name the layer's middleware type).
-tower_governor = { workspace = true, optional = true }
-governor    = { workspace = true, optional = true }
 http        = { workspace = true }
 bon         = { workspace = true }
 serde       = { workspace = true }
 tracing     = { workspace = true }
+
+# The serve loop: native only (hyper's server → tokio `net` → mio, which doesn't
+# build for wasm32-unknown-unknown). Together with the table above, native
+# builds get exactly axum's default features.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+axum        = { workspace = true, features = ["http1", "tokio"] }
+# For `graceful-shutdown`; see the feature's comment for why it's always on.
+tokio       = { workspace = true, features = ["signal"] }
+# Per-IP rate limiting; only when the `ratelimit` feature is on. `governor` is
+# the underlying GCRA limiter (needed to name the layer's middleware type).
+tower_governor = { workspace = true, optional = true }
+governor    = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net"] }
