@@ -330,4 +330,45 @@ mod tests {
             .unwrap();
         assert_eq!(app.state().head, 7);
     }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn default_read_config_applies_env_fallbacks() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Default, Debug)]
+        struct MyCfg {
+            n: u32,
+        }
+
+        struct UsesCfg;
+        impl<S: State> Plugin<S> for UsesCfg {
+            type Output = u32;
+            type Config = MyCfg;
+            const CONFIG_PREFIX: &'static str = "cfg";
+            const ENV_FALLBACKS: &'static [crate::EnvFallback] = &[crate::EnvFallback {
+                var: "STANDARD_N",
+                key: "n",
+            }];
+
+            async fn build(self, cfg: MyCfg, _s: &S, _c: &mut BuildCtx) -> Result<u32> {
+                Ok(cfg.n)
+            }
+        }
+
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("STANDARD_N", "5");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let app = runtime
+                .block_on(AppBuilder::<HNil>::with_figment(Figment::new()).with_plugin(UsesCfg))
+                .unwrap();
+            assert_eq!(app.state().head, 5);
+            Ok(())
+        });
+    }
 }

@@ -37,13 +37,15 @@
 use std::borrow::Cow;
 
 use bon::Builder;
-use muxa_core::{BuildCtx, Error, Plugin, Result, RunMode, State};
+use muxa_core::{BuildCtx, EnvFallback, Error, Plugin, Result, RunMode, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use sentry::ClientInitGuard;
 use sentry_tower::{NewSentryLayer, SentryHttpLayer};
 use serde::Deserialize;
 
-/// Configuration for [`SentryPlugin`]. Read from `[sentry]`.
+/// Configuration for [`SentryPlugin`]. Read from `[sentry]`; the SDK's own
+/// `SENTRY_DSN`, `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` fill `dsn`,
+/// `environment` and `release` when the app's configuration leaves them unset.
 ///
 /// `Default` is hand-written (not derived) so the values match the bon
 /// `#[builder(default = …)]` attributes. This matters because `#[serde(default)]`
@@ -142,6 +144,20 @@ impl<S: State> Plugin<S> for SentryPlugin {
     type Output = SentryHandle;
     type Config = SentryConfig;
     const CONFIG_PREFIX: &'static str = "sentry";
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[
+        EnvFallback {
+            var: "SENTRY_DSN",
+            key: "dsn",
+        },
+        EnvFallback {
+            var: "SENTRY_ENVIRONMENT",
+            key: "environment",
+        },
+        EnvFallback {
+            var: "SENTRY_RELEASE",
+            key: "release",
+        },
+    ];
 
     async fn build(
         self,
@@ -228,8 +244,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
             ctx.telemetry.add_layer(sentry_tracing::layer());
         }
 
-        // Whether events are actually sent: also true for a DSN the SDK picked
-        // up from `SENTRY_DSN` when the config has none.
+        // Whether events are actually sent.
         if guard.is_enabled() {
             let options = guard.options();
             tracing::info!(

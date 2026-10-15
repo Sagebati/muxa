@@ -99,6 +99,8 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 1. one TOML file: `$MYAPP_CONFIG` if set, otherwise `./config.toml`. A missing file is fine.
 2. environment variables prefixed `MYAPP_`, with `__` between keys: `MYAPP_WEB__PORT=8080` sets `web.port`, `MYAPP_ENV=production` the run mode.
 
+Under both, plugins read the unprefixed variables their ecosystem uses, but only for keys the app left unset: `DATABASE_URL` (sqlx, diesel), `SENTRY_DSN` / `SENTRY_ENVIRONMENT` / `SENTRY_RELEASE`, `OTEL_SERVICE_NAME` / `OTEL_EXPORTER_OTLP_ENDPOINT`, and `PORT` (web). A platform that injects `DATABASE_URL` or `PORT` works with no muxa-specific setup, and anything set in `config.toml` or under `MYAPP_` still wins.
+
 The prefix is the crate name uppercased, with anything that isn't a letter or digit turned into `_` (`katago-ws` → `KATAGO_WS_`). The plugin READMEs write it as `<APP>_`.
 
 ```toml

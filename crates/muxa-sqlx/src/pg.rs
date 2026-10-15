@@ -4,7 +4,7 @@ use std::ops::Deref;
 
 use bon::Builder;
 use dupe::Dupe;
-use muxa_core::{BuildCtx, Error, PgBackend, Plugin, Result, State};
+use muxa_core::{BuildCtx, EnvFallback, Error, PgBackend, Plugin, Result, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
@@ -51,7 +51,8 @@ fn default_min_connections() -> u32 {
     0
 }
 
-/// Configuration for [`SqlxPlugin`]. Read from `[sqlx]`.
+/// Configuration for [`SqlxPlugin`]. Read from `[sqlx]`; `DATABASE_URL` fills
+/// `url` when the app's configuration leaves it unset.
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct SqlxConfig {
@@ -85,11 +86,15 @@ impl<S: State> Plugin<S> for SqlxPlugin {
     type Output = SqlxPool;
     type Config = SqlxConfig;
     const CONFIG_PREFIX: &'static str = "sqlx";
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[EnvFallback {
+        var: "DATABASE_URL",
+        key: "url",
+    }];
 
     async fn build(self, cfg: SqlxConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<SqlxPool> {
         if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
-                "muxa-sqlx: `sqlx.url` is required (set `[sqlx] url` in config.toml or the app's `<APP>_SQLX__URL` env var)",
+                "muxa-sqlx: `sqlx.url` is required (set `[sqlx] url` in config.toml, the app's `<APP>_SQLX__URL` env var, or `DATABASE_URL`)",
             ));
         }
 

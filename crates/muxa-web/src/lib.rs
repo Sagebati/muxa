@@ -36,7 +36,7 @@ use axum::Router;
 use bon::Builder;
 #[cfg(feature = "openapi")]
 use muxa_core::Sections;
-use muxa_core::{BoxFuture, BuildCtx, Plugin, Result, ServeFn, ShutdownToken, State};
+use muxa_core::{BoxFuture, BuildCtx, EnvFallback, Plugin, Result, ServeFn, ShutdownToken, State};
 use serde::Deserialize;
 
 /// Default bind host.
@@ -51,7 +51,9 @@ fn default_port() -> u16 {
 
 /// Configuration for [`WebPlugin`].
 ///
-/// Read from the `[web]` configuration section.
+/// Read from the `[web]` configuration section. `PORT`, as hosting platforms
+/// set it, fills `port` when the app's configuration leaves it unset (see
+/// [`WEB_ENV_FALLBACKS`]).
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct WebConfig {
@@ -83,6 +85,14 @@ impl Default for WebConfig {
     }
 }
 
+/// The unprefixed env vars [`WebPlugin`] and `ApiPlugin` read for `[web]`: the
+/// `PORT` hosting platforms (Heroku, Cloud Run, Render, …) assign. `HOST` is
+/// deliberately not one — shells set it to the machine's hostname.
+pub const WEB_ENV_FALLBACKS: &[EnvFallback] = &[EnvFallback {
+    var: "PORT",
+    key: "port",
+}];
+
 /// A no-op routes function. Useful when you want a `WebPlugin` with no
 /// application-level routes (only plugin-contributed ones).
 pub fn no_routes<S>(_state: &S) -> Router {
@@ -113,6 +123,7 @@ where
     type Output = ();
     type Config = WebConfig;
     const CONFIG_PREFIX: &'static str = "web";
+    const ENV_FALLBACKS: &'static [EnvFallback] = WEB_ENV_FALLBACKS;
 
     async fn build(self, cfg: WebConfig, state: &S, ctx: &mut BuildCtx) -> Result<()> {
         // Invoke the user routes callback against the current state and mount
@@ -199,7 +210,7 @@ where
     /// fails the build.
     fn read_config(sections: &Sections<'_>) -> Result<ApiConfig> {
         Ok(ApiConfig {
-            web: sections.get("web")?,
+            web: sections.get_or_env("web", WEB_ENV_FALLBACKS)?,
             openapi: sections.get("openapi")?,
         })
     }

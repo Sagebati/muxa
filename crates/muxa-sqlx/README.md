@@ -33,7 +33,7 @@ async fn main() -> muxa::Result<()> {
 
 `SqlxPlugin` connects at startup and pushes a `SqlxPool` onto the app state.
 
-`[sqlx]`, or `<APP>_SQLX__*`:
+`[sqlx]`, or `<APP>_SQLX__*`. When the app sets neither, `DATABASE_URL` fills `url`:
 
 | Key | Default | |
 |---|---|---|

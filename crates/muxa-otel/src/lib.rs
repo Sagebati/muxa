@@ -17,15 +17,16 @@
 //! | `otlp-http`       |         | OTLP exporter over HTTP (implies `traces`)               |
 //! | `tracing-bridge`  |         | Route `tracing` spans to the tracer provider             |
 //!
-//! Export turns on only when `[otel].endpoint` is set **and** an OTLP transport
-//! feature is compiled in; otherwise the plugin just installs the HTTP
+//! Export turns on only when `[otel].endpoint` (or, failing it,
+//! `OTEL_EXPORTER_OTLP_ENDPOINT`) is set **and** an OTLP transport feature is
+//! compiled in; otherwise the plugin just installs the HTTP
 //! `TraceLayer` and records the service name (export is a no-op).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 use bon::Builder;
-use muxa_core::{BuildCtx, Plugin, Result, State};
+use muxa_core::{BuildCtx, EnvFallback, Plugin, Result, State};
 use serde::Deserialize;
 
 fn default_service_name() -> String {
@@ -38,7 +39,9 @@ fn default_metric_interval_secs() -> u64 {
     60
 }
 
-/// Configuration for [`OtelPlugin`]. Read from `[otel]` (and `<APP>_OTEL__*`).
+/// Configuration for [`OtelPlugin`]. Read from `[otel]` (and `<APP>_OTEL__*`);
+/// the spec's `OTEL_SERVICE_NAME` and `OTEL_EXPORTER_OTLP_ENDPOINT` fill
+/// `service_name` and `endpoint` when the app's configuration leaves them unset.
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct OtelConfig {
@@ -46,7 +49,9 @@ pub struct OtelConfig {
     #[builder(default = default_service_name())]
     pub service_name: String,
     /// OTLP collector endpoint, e.g. `http://localhost:4317` (gRPC) or
-    /// `http://localhost:4318` (HTTP). When unset, export is disabled.
+    /// `http://localhost:4318` (HTTP). Over HTTP it's the base URL, as with
+    /// `OTEL_EXPORTER_OTLP_ENDPOINT`: each signal goes to its `/v1/<signal>`
+    /// path under it. When unset, export is disabled.
     pub endpoint: Option<String>,
     /// Per-export request timeout, in seconds.
     #[builder(default = default_timeout_secs())]
@@ -92,16 +97,21 @@ mod export {
     use crate::OtelConfig;
 
     /// Build the OTLP exporter for the selected transport, endpoint and timeout.
-    /// `otlp-tonic` wins if both transports are somehow enabled.
+    /// `otlp-tonic` wins if both transports are somehow enabled. Over HTTP the
+    /// endpoint is a base URL and `$path` the signal's path under it (an
+    /// explicit endpoint is otherwise sent to as-is by the SDK).
     macro_rules! configured_exporter {
-        ($builder:expr, $endpoint:expr, $timeout:expr) => {{
+        ($builder:expr, $endpoint:expr, $path:literal, $timeout:expr) => {{
             use opentelemetry_otlp::WithExportConfig as _;
             #[cfg(feature = "otlp-tonic")]
-            let builder = $builder.with_tonic();
+            let (builder, endpoint) = ($builder.with_tonic(), $endpoint.to_owned());
             #[cfg(all(feature = "otlp-http", not(feature = "otlp-tonic")))]
-            let builder = $builder.with_http();
+            let (builder, endpoint) = (
+                $builder.with_http(),
+                format!("{}{}", $endpoint.trim_end_matches('/'), $path),
+            );
             builder
-                .with_endpoint($endpoint)
+                .with_endpoint(endpoint)
                 .with_timeout($timeout)
                 .build()
                 .map_err(Error::other)?
@@ -185,6 +195,7 @@ mod export {
             let exporter = configured_exporter!(
                 opentelemetry_otlp::SpanExporter::builder(),
                 endpoint,
+                "/v1/traces",
                 timeout
             );
             let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
@@ -204,6 +215,7 @@ mod export {
             let exporter = configured_exporter!(
                 opentelemetry_otlp::MetricExporter::builder(),
                 endpoint,
+                "/v1/metrics",
                 timeout
             );
             let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
@@ -222,6 +234,7 @@ mod export {
             let exporter = configured_exporter!(
                 opentelemetry_otlp::LogExporter::builder(),
                 endpoint,
+                "/v1/logs",
                 timeout
             );
             let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
@@ -260,6 +273,16 @@ impl<S: State> Plugin<S> for OtelPlugin {
     type Output = TelemetryHandles;
     type Config = OtelConfig;
     const CONFIG_PREFIX: &'static str = "otel";
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[
+        EnvFallback {
+            var: "OTEL_SERVICE_NAME",
+            key: "service_name",
+        },
+        EnvFallback {
+            var: "OTEL_EXPORTER_OTLP_ENDPOINT",
+            key: "endpoint",
+        },
+    ];
 
     async fn build(
         self,

@@ -16,7 +16,7 @@
 
 use core::future::Future;
 
-use crate::{BuildCtx, Result, Sections, State};
+use crate::{BuildCtx, EnvFallback, Result, Sections, State};
 
 /// A muxa plugin.
 ///
@@ -45,6 +45,12 @@ pub trait Plugin<S: State>: Sized + Send + 'static {
     /// the default `read_config` will return `Self::Config::default()`.
     const CONFIG_PREFIX: &'static str;
 
+    /// Conventional unprefixed env vars that fill keys of the `CONFIG_PREFIX`
+    /// section the app's configuration leaves unset — e.g. `DATABASE_URL` for
+    /// `url`. The app's file and `<APP>_*` vars always win; see
+    /// [`EnvFallback`]. None by default.
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[];
+
     /// Build the plugin: produce its resource and (optionally) register
     /// routes, tasks, or middleware via `ctx`.
     ///
@@ -71,14 +77,15 @@ pub trait Plugin<S: State>: Sized + Send + 'static {
     /// `sections` gives access to the configuration by named section only —
     /// a plugin never sees the merged configuration as a whole.
     ///
-    /// Default implementation: read the section at `CONFIG_PREFIX` (see
-    /// [`Sections::get`] for the absent / empty-prefix / invalid rules).
+    /// Default implementation: read the section at `CONFIG_PREFIX`, with
+    /// `ENV_FALLBACKS` (see [`Sections::get_or_env`]; [`Sections::get`] has
+    /// the absent / empty-prefix / invalid rules).
     ///
     /// Override when `Config` is made of more than one section — read each
     /// one with [`Sections::get`] and assemble them — or to add validation.
     /// This is the only place a plugin reads configuration; `build` gets the
     /// resulting `Config` and nothing else.
     fn read_config(sections: &Sections<'_>) -> Result<Self::Config> {
-        sections.get(Self::CONFIG_PREFIX)
+        sections.get_or_env(Self::CONFIG_PREFIX, Self::ENV_FALLBACKS)
     }
 }

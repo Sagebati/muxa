@@ -56,7 +56,7 @@ A complete, runnable version is the [`diesel_widgets`](../muxa/examples/diesel_w
 
 ## Config
 
-`[diesel]`, or `<APP>_DIESEL__*`:
+`[diesel]`, or `<APP>_DIESEL__*`. When the app sets neither, `DATABASE_URL` fills `url`:
 
 | Key | Default | |
 |---|---|---|

@@ -55,7 +55,7 @@ A bare closure, `WebPlugin::new(move |_state| router)`, does not compile: the cl
 
 ### Config
 
-`[web]`, or `<APP>_WEB__*`:
+`[web]`, or `<APP>_WEB__*`. When the app sets neither, `PORT` (as Heroku, Cloud Run, Render and similar platforms assign it) fills `port`:
 
 | Key | Default | |
 |---|---|---|
