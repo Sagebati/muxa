@@ -65,31 +65,24 @@ impl AppBuilder<HNil> {
         Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
     }
 
-    /// Like [`AppBuilder::default`], plus an app-owned env prefix for the
-    /// app's own config sections. muxa's sections and `MUXA_ENV` stay on
-    /// `MUXA_*`; `{prefix}<SECTION>__*` sets `app_sections` and wins over
-    /// `MUXA_<SECTION>__*` (still read, at lower precedence), and
-    /// `{prefix}CONFIG` names the config file ahead of `MUXA_CONFIG`. The
-    /// prefix should include its trailing separator.
+    /// Builder for an app that owns its configuration namespace: env vars are
+    /// prefixed with the app's name (`"katago-ws"` → `KATAGO_WS_WEB__PORT`,
+    /// `KATAGO_WS_ENV`, …) and the file is `config.toml`, overridable with
+    /// `$KATAGO_WS_CONFIG`. Usually called through [`crate::app!`], which
+    /// passes the calling crate's package name.
     ///
-    /// ```ignore
-    /// App::with_app_env_prefix("MYAPP_", &["engine", "worker"])
-    /// ```
+    /// Legacy `MUXA_*` vars and a `muxa.toml` file still apply at lower
+    /// precedence; one warning per legacy name (never its value) is logged
+    /// once the subscriber is installed.
     ///
-    /// Logs one warning per legacy `MUXA_<SECTION>__*` var still set (name
-    /// only, never the value) once the subscriber is installed.
-    ///
-    /// See [`crate::config::load_figment_with_app_prefix`].
-    pub fn with_app_env_prefix(prefix: &str, app_sections: &[&str]) -> Self {
-        let app = Self::with_figment(crate::config::load_figment_with_app_prefix(
-            prefix,
-            app_sections,
-        ));
-        for (legacy, renamed) in crate::config::legacy_app_env_vars(prefix, app_sections) {
+    /// See [`crate::config::load_figment_for_app`].
+    pub fn named(app_name: &str) -> Self {
+        let app = Self::with_figment(crate::config::load_figment_for_app(app_name));
+        for (legacy, renamed) in crate::config::deprecated_config_names(app_name) {
             tracing::warn!(
                 legacy = %legacy,
                 renamed = %renamed,
-                "deprecated env var {legacy}: still applied, but {renamed} takes precedence; rename it"
+                "deprecated config name {legacy}: still applied, but {renamed} takes precedence; rename it"
             );
         }
         app

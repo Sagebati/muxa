@@ -141,12 +141,12 @@ Config is a [figment](https://docs.rs/figment) built from two layers, last one w
 | `App::with_config_file(path)` | `load_figment_from(path)` | `path` | `MUXA_` |
 | `App::with_env_prefix(p)` | `load_figment_with_prefix(p)` | `${p}CONFIG` or `./muxa.toml` | `p` |
 | `App::with_config_file_and_env_prefix(path, p)` | `load_figment_from_with_prefix(path, p)` | `path` | `p` |
-| `App::with_app_env_prefix(p, sections)` | `load_figment_with_app_prefix(p, sections)` | `${p}CONFIG`, `$MUXA_CONFIG` or `./muxa.toml` | `MUXA_`, then `p` for `sections` |
+| `muxa::app!()` / `App::named(name)` | `load_figment_for_app(name)` | `$<NAME>_CONFIG` or `./config.toml` (legacy: `$MUXA_CONFIG`, `./muxa.toml`) | `<NAME>_` (legacy: `MUXA_`) |
 | `App::with_figment(figment)` | none | yours | yours |
 
 The prefix includes its trailing separator: `"MYAPP_"`, not `"MYAPP"`.
 
-`with_app_env_prefix` is for an app whose own sections aren't muxa's. muxa's sections (`[web]`, `[diesel]`, …) and `MUXA_ENV` stay on `MUXA_`; `MYAPP_ENGINE__MAX_VISITS` sets `engine.max_visits` and wins over `MUXA_ENGINE__MAX_VISITS`. Only nested keys under the listed sections are read, so `MYAPP_ENV` or `MYAPP_WEB__PORT` are ignored. The old `MUXA_<SECTION>__*` names still apply at lower precedence, with a startup warning naming the replacement.
+`muxa::app!()` names the configuration after the calling crate, so operators never see muxa's name: for a crate `katago-ws`, `KATAGO_WS_WEB__PORT` sets `web.port`, `KATAGO_WS_ENV` the run mode, and the file is `config.toml` (or `$KATAGO_WS_CONFIG`). Legacy `MUXA_*` vars and `muxa.toml` still apply at lower precedence, with one startup warning per name naming its replacement.
 
 The application owns the merged configuration and can read any of it, for settings that belong to no plugin:
 

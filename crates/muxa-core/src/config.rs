@@ -1,6 +1,6 @@
 //! figment-based configuration loading.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use figment::Figment;
 use figment::providers::{Env, Format as _, Toml};
@@ -72,79 +72,109 @@ pub fn load_figment_from_with_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> F
         .merge(Env::prefixed(prefix).split("__").ignore(&["config"]))
 }
 
-/// Build the application figment with an **app env prefix** layered on top of
-/// the framework's `MUXA_` one.
+/// Default config-file path for a named app ([`load_figment_for_app`]):
+/// `config.toml` in the current directory.
+pub const DEFAULT_APP_CONFIG_PATH: &str = "config.toml";
+
+/// The env-var prefix for an app name: uppercased, with every character that
+/// isn't ASCII alphanumeric replaced by `_`, plus a trailing `_`.
+/// `"katago-ws"` → `"KATAGO_WS_"`.
+#[must_use]
+pub fn app_env_prefix(app_name: &str) -> String {
+    let mut prefix: String = app_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    prefix.push('_');
+    prefix
+}
+
+/// The config file a named app loads, first match wins:
 ///
-/// For apps whose own config sections (`[engine]`, `[worker]`, …) aren't
-/// muxa's and shouldn't live under `MUXA_`, while muxa's plugin sections
-/// (`[web]`, `[diesel]`, `[otel]`, …) and the `env` run mode keep `MUXA_`.
-///
-/// Layers (last wins):
-/// 1. A single TOML file: `$<app_prefix>CONFIG` if set, else `$MUXA_CONFIG`,
-///    else `./muxa.toml`. Missing file is fine.
-/// 2. `MUXA_*` env vars, exactly as [`load_figment`].
-/// 3. `<app_prefix>*` env vars, `__`-nested onto the same tree, but **only**
-///    for nested keys under `app_sections`. e.g. with prefix `MYAPP_` and
-///    sections `["engine"]`, `MYAPP_ENGINE__MAX_VISITS` maps to
-///    `engine.max_visits`, while `MYAPP_ENV` / `MYAPP_WEB__PORT` are ignored,
-///    so the app prefix can't touch the run mode or a framework section.
-///
-/// `MUXA_<SECTION>__*` still feeds app sections at lower precedence, so
-/// existing deployments keep working; see [`legacy_app_env_vars`] to find
-/// and warn about them.
-pub fn load_figment_with_app_prefix(app_prefix: &str, app_sections: &[&str]) -> Figment {
-    match [
-        format!("{app_prefix}CONFIG"),
+/// 1. `$<PREFIX>CONFIG` (e.g. `$KATAGO_WS_CONFIG`);
+/// 2. `$MUXA_CONFIG` (legacy);
+/// 3. `./config.toml` if it exists;
+/// 4. `./muxa.toml` if it exists (legacy);
+/// 5. otherwise `./config.toml` (a missing file is fine).
+#[must_use]
+pub fn app_config_path(app_name: &str) -> PathBuf {
+    let prefix = app_env_prefix(app_name);
+    [
+        format!("{prefix}CONFIG"),
         format!("{DEFAULT_ENV_PREFIX}CONFIG"),
     ]
     .into_iter()
     .find_map(std::env::var_os)
-    {
-        Some(path) => load_figment_from_with_app_prefix(path, app_prefix, app_sections),
-        None => load_figment_from_with_app_prefix(DEFAULT_CONFIG_PATH, app_prefix, app_sections),
-    }
+    .map(PathBuf::from)
+    .or_else(|| {
+        [DEFAULT_APP_CONFIG_PATH, DEFAULT_CONFIG_PATH]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+    })
+    .unwrap_or_else(|| PathBuf::from(DEFAULT_APP_CONFIG_PATH))
 }
 
-/// Like [`load_figment_with_app_prefix`], but the config-file path is supplied
-/// explicitly (neither `{app_prefix}CONFIG` nor `MUXA_CONFIG` is consulted).
-pub fn load_figment_from_with_app_prefix<P: AsRef<Path>>(
-    path: P,
-    app_prefix: &str,
-    app_sections: &[&str],
-) -> Figment {
-    let sections: Vec<String> = app_sections.iter().map(|sec| (*sec).to_owned()).collect();
-    load_figment_from_with_prefix(path, DEFAULT_ENV_PREFIX).merge(
-        Env::prefixed(app_prefix).split("__").filter(move |key| {
-            // `split` already ran, so `ENGINE__MAX_VISITS` arrives as
-            // `engine.max_visits` (case not yet folded).
-            key.as_str()
-                .split_once('.')
-                .is_some_and(|(head, _)| sections.iter().any(|sec| sec.eq_ignore_ascii_case(head)))
-        }),
-    )
-}
-
-/// `MUXA_*` env vars that set one of `app_sections`, each paired with the
-/// `<app_prefix>*` name that now owns it, e.g.
-/// `("MUXA_ENGINE__MODEL", "KATAGO_WS_ENGINE__MODEL")`. Sorted by name.
+/// Build the figment for an app that owns its configuration namespace, with
+/// no muxa branding: env vars are prefixed by the app's name
+/// ([`app_env_prefix`]) and the file is `config.toml` ([`app_config_path`]).
 ///
-/// They still apply (below the app prefix, see
-/// [`load_figment_with_app_prefix`]); this lets the app log a deprecation
-/// once its tracing subscriber is up.
+/// Layers (last wins):
+/// 1. the TOML file from [`app_config_path`];
+/// 2. legacy `MUXA_*` env vars, so deployments that predate the rename keep
+///    working (see [`deprecated_config_names`]);
+/// 3. `<PREFIX>*` env vars, `__`-nested like `MUXA_*`: with the name
+///    `katago-ws`, `KATAGO_WS_WEB__PORT` sets `web.port` and `KATAGO_WS_ENV`
+///    the run mode.
+///
+/// [`crate::app!`] calls this (through [`crate::AppBuilder::named`]) with the
+/// calling crate's package name.
 #[must_use]
-pub fn legacy_app_env_vars(app_prefix: &str, app_sections: &[&str]) -> Vec<(String, String)> {
+pub fn load_figment_for_app(app_name: &str) -> Figment {
+    load_figment_from_for_app(app_config_path(app_name), app_name)
+}
+
+/// Like [`load_figment_for_app`], but the config-file path is supplied
+/// explicitly.
+#[must_use]
+pub fn load_figment_from_for_app<P: AsRef<Path>>(path: P, app_name: &str) -> Figment {
+    let prefix = app_env_prefix(app_name);
+    load_figment_from_with_prefix(path, DEFAULT_ENV_PREFIX)
+        .merge(Env::prefixed(&prefix).split("__").ignore(&["config"]))
+}
+
+/// Legacy names a named app still honours, each paired with its replacement:
+/// every `MUXA_*` env var set (`("MUXA_DIESEL__URL", "KATAGO_WS_DIESEL__URL")`)
+/// and, when [`app_config_path`] fell back to it, the `muxa.toml` file
+/// (`("muxa.toml", "config.toml")`). Names only, never values. Sorted.
+///
+/// [`crate::AppBuilder::named`] logs one warning per entry.
+#[must_use]
+pub fn deprecated_config_names(app_name: &str) -> Vec<(String, String)> {
+    let prefix = app_env_prefix(app_name);
+    if prefix == DEFAULT_ENV_PREFIX {
+        return Vec::new();
+    }
     let mut found: Vec<(String, String)> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
         .filter_map(|name| {
             let rest = strip_prefix_ignore_case(&name, DEFAULT_ENV_PREFIX)?;
-            let (head, _) = rest.split_once("__")?;
-            let renamed = format!("{app_prefix}{rest}");
-            app_sections
-                .iter()
-                .any(|sec| sec.eq_ignore_ascii_case(head))
-                .then_some((name, renamed))
+            let renamed = format!("{prefix}{rest}");
+            Some((name, renamed))
         })
         .collect();
+    if app_config_path(app_name) == Path::new(DEFAULT_CONFIG_PATH) {
+        found.push((
+            DEFAULT_CONFIG_PATH.to_owned(),
+            DEFAULT_APP_CONFIG_PATH.to_owned(),
+        ));
+    }
     found.sort();
     found
 }
@@ -248,41 +278,42 @@ mod tests {
         assert!(Sections::new(&fig).get::<Limits>("limits").is_err());
     }
 
-    const APP: &str = "MYAPP_";
-    const SECTIONS: &[&str] = &["engine", "worker"];
+    const APP: &str = "katago-ws";
+
+    #[test]
+    fn app_env_prefix_derives_from_the_name() {
+        assert_eq!(app_env_prefix("katago-ws"), "KATAGO_WS_");
+        assert_eq!(app_env_prefix("my.app"), "MY_APP_");
+        assert_eq!(app_env_prefix("MyApp2"), "MYAPP2_");
+    }
 
     #[test]
     #[allow(
         clippy::result_large_err,
         reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
     )]
-    fn app_prefix_wins_over_muxa_prefix_and_file() {
+    fn app_prefix_wins_over_legacy_prefix_and_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
-                "muxa.toml",
+                "config.toml",
                 "[engine]\nmax_visits = 10\nmodel = \"file\"\nbinary = \"file\"\n",
             )?;
             jail.set_env("MUXA_ENGINE__MAX_VISITS", "20");
             jail.set_env("MUXA_ENGINE__MODEL", "muxa");
 
             // Only the legacy `MUXA_` var: it still beats the file.
-            let fig = load_figment_with_app_prefix(APP, SECTIONS);
+            let fig = load_figment_for_app(APP);
             assert_eq!(fig.extract_inner::<u32>("engine.max_visits").unwrap(), 20);
 
             // Both set: the app prefix wins; untouched keys keep their source.
-            jail.set_env("MYAPP_ENGINE__MAX_VISITS", "50");
-            let fig = load_figment_with_app_prefix(APP, SECTIONS);
+            jail.set_env("KATAGO_WS_ENGINE__MAX_VISITS", "50");
+            let fig = load_figment_for_app(APP);
             assert_eq!(fig.extract_inner::<u32>("engine.max_visits").unwrap(), 50);
             assert_eq!(fig.extract_inner::<String>("engine.model").unwrap(), "muxa");
             assert_eq!(
                 fig.extract_inner::<String>("engine.binary").unwrap(),
                 "file"
             );
-
-            // Case-insensitive, like figment's own prefix matching.
-            jail.set_env("myapp_Worker__Slots", "3");
-            let fig = load_figment_with_app_prefix(APP, SECTIONS);
-            assert_eq!(fig.extract_inner::<u32>("worker.slots").unwrap(), 3);
             Ok(())
         });
     }
@@ -292,32 +323,34 @@ mod tests {
         clippy::result_large_err,
         reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
     )]
-    fn app_prefix_does_not_bleed_into_framework_keys() {
+    fn app_prefix_covers_framework_sections_and_run_mode() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("MUXA_ENV", "dev");
             jail.set_env("MUXA_WEB__PORT", "8080");
-            jail.set_env("MYAPP_ENV", "production");
-            jail.set_env("MYAPP_ROLE", "worker");
-            jail.set_env("MYAPP_WEB__PORT", "1");
-            jail.set_env("MYAPP_ENGINE", "scalar");
-
-            let fig = load_figment_with_app_prefix(APP, SECTIONS);
-            // The run mode stays on `MUXA_ENV`.
+            let fig = load_figment_for_app(APP);
             assert_eq!(
                 crate::RunMode::from_figment(&fig),
                 crate::RunMode::Development
             );
-            assert_eq!(fig.extract_inner::<String>("env").unwrap(), "dev");
-            // Framework sections stay on `MUXA_`.
             assert_eq!(fig.extract_inner::<u16>("web.port").unwrap(), 8080);
-            // Non-section / un-nested app vars never reach the figment.
-            assert!(fig.find_value("role").is_err());
-            assert!(fig.find_value("engine").is_err());
-            assert!(fig.find_value("config").is_err());
 
-            // And the plain `MUXA_` loader never reads the app prefix.
-            jail.set_env("MYAPP_ENGINE__MAX_VISITS", "50");
-            assert!(load_figment().find_value("engine.max_visits").is_err());
+            jail.set_env("KATAGO_WS_ENV", "production");
+            jail.set_env("KATAGO_WS_WEB__PORT", "3000");
+            let fig = load_figment_for_app(APP);
+            assert_eq!(
+                crate::RunMode::from_figment(&fig),
+                crate::RunMode::Production
+            );
+            assert_eq!(fig.extract_inner::<u16>("web.port").unwrap(), 3000);
+
+            // The bootstrap vars never become keys; plain `load_figment` never
+            // reads the app prefix.
+            jail.set_env("KATAGO_WS_CONFIG", "missing.toml");
+            assert!(load_figment_for_app(APP).find_value("config").is_err());
+            assert_eq!(
+                load_figment().extract_inner::<u16>("web.port").unwrap(),
+                8080
+            );
             Ok(())
         });
     }
@@ -327,22 +360,26 @@ mod tests {
         clippy::result_large_err,
         reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
     )]
-    fn app_config_var_selects_file_ahead_of_muxa_config() {
+    fn app_config_path_lookup_order() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file("muxa.toml", "[engine]\nmodel = \"default\"\n")?;
-            jail.create_file("muxa-cfg.toml", "[engine]\nmodel = \"muxa-config\"\n")?;
-            jail.create_file("app-cfg.toml", "[engine]\nmodel = \"app-config\"\n")?;
-            let model = || {
-                load_figment_with_app_prefix(APP, SECTIONS)
-                    .extract_inner::<String>("engine.model")
-                    .unwrap()
-            };
+            let path = || app_config_path(APP);
+            assert_eq!(path(), Path::new("config.toml"), "nothing on disk");
 
-            assert_eq!(model(), "default");
-            jail.set_env("MUXA_CONFIG", "muxa-cfg.toml");
-            assert_eq!(model(), "muxa-config");
-            jail.set_env("MYAPP_CONFIG", "app-cfg.toml");
-            assert_eq!(model(), "app-config");
+            jail.create_file("muxa.toml", "")?;
+            assert_eq!(path(), Path::new("muxa.toml"), "legacy file only");
+
+            jail.create_file("config.toml", "")?;
+            assert_eq!(
+                path(),
+                Path::new("config.toml"),
+                "config.toml beats muxa.toml"
+            );
+
+            jail.set_env("MUXA_CONFIG", "legacy.toml");
+            assert_eq!(path(), Path::new("legacy.toml"));
+
+            jail.set_env("KATAGO_WS_CONFIG", "app.toml");
+            assert_eq!(path(), Path::new("app.toml"));
             Ok(())
         });
     }
@@ -352,28 +389,30 @@ mod tests {
         clippy::result_large_err,
         reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
     )]
-    fn legacy_app_env_vars_lists_only_app_sections() {
+    fn deprecated_config_names_lists_legacy_vars_and_file() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("MUXA_ENGINE__MODEL", "m");
-            jail.set_env("MUXA_WORKER__SLOTS", "2");
-            jail.set_env("MUXA_WEB__PORT", "8080");
             jail.set_env("MUXA_ENV", "dev");
-            jail.set_env("MUXA_ENGINEX__MODEL", "not-a-section");
-            jail.set_env("MYAPP_ENGINE__MODEL", "m");
-
+            jail.set_env("KATAGO_WS_WEB__PORT", "3000");
             assert_eq!(
-                legacy_app_env_vars(APP, SECTIONS),
+                deprecated_config_names(APP),
                 vec![
                     (
                         "MUXA_ENGINE__MODEL".to_owned(),
-                        "MYAPP_ENGINE__MODEL".to_owned()
+                        "KATAGO_WS_ENGINE__MODEL".to_owned()
                     ),
-                    (
-                        "MUXA_WORKER__SLOTS".to_owned(),
-                        "MYAPP_WORKER__SLOTS".to_owned()
-                    ),
+                    ("MUXA_ENV".to_owned(), "KATAGO_WS_ENV".to_owned()),
                 ]
             );
+
+            jail.create_file("muxa.toml", "")?;
+            assert!(
+                deprecated_config_names(APP)
+                    .contains(&("muxa.toml".to_owned(), "config.toml".to_owned()))
+            );
+
+            // An app literally named `muxa` has nothing to migrate.
+            assert!(deprecated_config_names("muxa").is_empty());
             Ok(())
         });
     }
