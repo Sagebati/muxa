@@ -35,7 +35,7 @@ struct GreeterPlugin;
 impl<S: State> Plugin<S> for GreeterPlugin {
     type Output = Greeter;                             // pushed onto the app state
     type Config = GreeterConfig;
-    const CONFIG_PREFIX: &'static str = "greeter";     // [greeter] / MUXA_GREETER__*
+    const CONFIG_PREFIX: &'static str = "greeter";     // [greeter] / <APP>_GREETER__*
 
     async fn build(self, cfg: GreeterConfig, _state: &S, ctx: &mut BuildCtx) -> Result<Greeter> {
         ctx.router
@@ -61,7 +61,7 @@ impl<S: State> Plugin<S> for GreeterPlugin {
 `Selector<T, Idx>` borrows a `T` from anywhere in the list. `Idx` is a phantom position that the compiler infers:
 
 ```rust
-let app = App::default().with_plugin(GreeterPlugin).await?;
+let app = muxa::app!().with_plugin(GreeterPlugin).await?;
 let greeter: &Greeter = Selector::<Greeter, _>::select(app.state());
 ```
 
@@ -93,7 +93,7 @@ where
 ```
 
 ```rust
-App::default()
+muxa::app!()
     .with_plugin(GreeterPlugin).await?
     .with_plugin(ShoutPlugin(PhantomData)).await?
 ```
@@ -130,23 +130,18 @@ Creating an `App` also installs the global `tracing` subscriber (stdout, filtere
 
 ## Config
 
-Config is a [figment](https://docs.rs/figment) built from two layers, last one wins:
+Config is a [figment](https://docs.rs/figment) named after the app, built from two layers, last one wins:
 
-1. one TOML file: `$MUXA_CONFIG` if set, otherwise `./muxa.toml`. A missing file is fine.
-2. environment variables prefixed `MUXA_`, with `__` between keys: `MUXA_PGMQ__URL` sets `pgmq.url`.
+1. one TOML file: `$<APP>_CONFIG` if set, otherwise `./config.toml`. A missing file is fine.
+2. environment variables with the app's prefix, `__` between keys: for `katago-ws`, `KATAGO_WS_PGMQ__URL` sets `pgmq.url`.
+
+`env_prefix(name)` derives the prefix: uppercased, every non-alphanumeric character turned into `_`, plus a trailing `_` (`"katago-ws"` → `"KATAGO_WS_"`).
 
 | Constructor | Loader | Config file | Env prefix |
 |---|---|---|---|
-| `App::default()` | `load_figment()` | `$MUXA_CONFIG` or `./muxa.toml` | `MUXA_` |
-| `App::with_config_file(path)` | `load_figment_from(path)` | `path` | `MUXA_` |
-| `App::with_env_prefix(p)` | `load_figment_with_prefix(p)` | `${p}CONFIG` or `./muxa.toml` | `p` |
-| `App::with_config_file_and_env_prefix(path, p)` | `load_figment_from_with_prefix(path, p)` | `path` | `p` |
-| `muxa::app!()` / `App::named(name)` | `load_figment_for_app(name)` | `$<NAME>_CONFIG` or `./config.toml` (legacy: `$MUXA_CONFIG`, `./muxa.toml`) | `<NAME>_` (legacy: `MUXA_`) |
-| `App::with_figment(figment)` | none | yours | yours |
-
-The prefix includes its trailing separator: `"MYAPP_"`, not `"MYAPP"`.
-
-`muxa::app!()` names the configuration after the calling crate, so operators never see muxa's name: for a crate `katago-ws`, `KATAGO_WS_WEB__PORT` sets `web.port`, `KATAGO_WS_ENV` the run mode, and the file is `config.toml` (or `$KATAGO_WS_CONFIG`). Legacy `MUXA_*` vars and `muxa.toml` still apply at lower precedence, with one startup warning per name naming its replacement.
+| `muxa::app!()` | `load_figment(env!("CARGO_PKG_NAME"))` | `$<APP>_CONFIG` or `./config.toml` | from the crate name |
+| `App::named(name)` | `load_figment(name)` | `$<APP>_CONFIG` or `./config.toml` | `env_prefix(name)` |
+| `App::with_figment(figment)` | none (e.g. `load_figment_from(path, name)`) | yours | yours |
 
 The application owns the merged configuration and can read any of it, for settings that belong to no plugin:
 
@@ -158,7 +153,7 @@ let limits: Limits = app.figment().extract_inner("limits")?;
 
 `ctx.mode` is resolved once, when the app is created:
 
-1. from the top-level `env` key (`env = "production"` in the file, or `MUXA_ENV=production`). It is case-insensitive and accepts `dev` / `development` / `debug` and `prod` / `production` / `release`.
+1. from the top-level `env` key (`env = "production"` in the file, or `<APP>_ENV=production`). It is case-insensitive and accepts `dev` / `development` / `debug` and `prod` / `production` / `release`.
 2. otherwise from the build profile: a debug build is `Development`, a release build is `Production`.
 
 Plugins use it for environment-dependent defaults. `muxa-sentry`, for example, derives its `environment` tag and its sample rate from it.

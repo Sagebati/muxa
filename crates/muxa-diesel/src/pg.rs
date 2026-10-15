@@ -82,7 +82,7 @@ impl Default for DieselConfig {
 ///
 /// const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 ///
-/// App::default()
+/// muxa::app!()
 ///     .with_plugin(DieselPlugin::new().with_migrations(MigrationsRunner::new(MIGRATIONS)))
 ///     .await?
 ///     // …
@@ -119,7 +119,7 @@ impl<S: State> Plugin<S> for DieselPlugin {
     async fn build(self, cfg: DieselConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<DieselPool> {
         if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
-                "muxa-diesel: `diesel.url` is required (set in config or MUXA_DIESEL__URL)",
+                "muxa-diesel: `diesel.url` is required (set `[diesel] url` in config.toml or the app's `<APP>_DIESEL__URL` env var)",
             ));
         }
 

@@ -23,7 +23,7 @@ where
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    muxa::app!()
         .with_plugin(OtelPlugin).await?
         .with_plugin(DieselPlugin::new()).await?
         .with_plugin(WebPlugin::new(routes)).await?
@@ -56,7 +56,7 @@ A complete, runnable version is the [`diesel_widgets`](../muxa/examples/diesel_w
 
 ## Config
 
-`[diesel]`, or `MUXA_DIESEL__*`:
+`[diesel]`, or `<APP>_DIESEL__*`:
 
 | Key | Default | |
 |---|---|---|
@@ -72,7 +72,7 @@ With the `migrations` feature, the plugin applies pending migrations at startup,
 ```rust
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();   // ./migrations
 
-App::default()
+muxa::app!()
     .with_plugin(DieselPlugin::new().with_migrations(MigrationsRunner::new(MIGRATIONS)))
     .await?
 ```

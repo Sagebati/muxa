@@ -89,7 +89,7 @@ impl<S: State> Plugin<S> for SqlxPlugin {
     async fn build(self, cfg: SqlxConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<SqlxPool> {
         if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
-                "muxa-sqlx: `sqlx.url` is required (set in config or MUXA_SQLX__URL)",
+                "muxa-sqlx: `sqlx.url` is required (set `[sqlx] url` in config.toml or the app's `<APP>_SQLX__URL` env var)",
             ));
         }
 

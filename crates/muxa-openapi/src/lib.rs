@@ -16,7 +16,7 @@
 //!     .api_route("/thing", aide::axum::routing::get(handler))
 //!     .finish_api(&mut api);
 //!
-//! App::default()
+//! muxa::app!()
 //!     .with_plugin(OpenApiPlugin::new(api)).await?   // mounts /openapi.json + /docs
 //!     .with_plugin(WebPlugin::new(move |_s| router)).await?
 //!     .run().await
@@ -60,7 +60,7 @@ fn default_title() -> String {
 }
 
 /// Configuration for [`OpenApiPlugin`], read from the `[openapi]` figment table
-/// (and `MUXA_OPENAPI__*` env vars).
+/// (and `<APP>_OPENAPI__*` env vars).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OpenApiConfig {

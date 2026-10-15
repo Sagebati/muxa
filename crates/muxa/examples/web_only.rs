@@ -20,7 +20,7 @@ fn routes<S>(_state: &S) -> Router {
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    App::named("web-only")
         .with_plugin(OtelPlugin)
         .await?
         .with_plugin(WebPlugin::new(routes))

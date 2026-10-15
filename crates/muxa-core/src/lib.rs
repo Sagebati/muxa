@@ -8,7 +8,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa_core::Result<()> {
-//!     App::default()
+//!     muxa_core::app!()
 //!         // .with_plugin(MyPlugin::default()).await?
 //!         // .with_plugin(AnotherPlugin::builder().build()).await?
 //!         .run().await
@@ -36,7 +36,7 @@ pub use app::{App, AppBuilder};
 
 /// An [`App`] named after the calling crate: `muxa::app!()` is
 /// `App::named(env!("CARGO_PKG_NAME"))`, so a crate `katago-ws` reads
-/// `KATAGO_WS_*` env vars and `config.toml`. See [`AppBuilder::named`].
+/// `config.toml` and `KATAGO_WS_*` env vars. See [`AppBuilder::named`].
 #[macro_export]
 macro_rules! app {
     () => {
@@ -44,11 +44,7 @@ macro_rules! app {
     };
 }
 pub use capability::{HasPgExecutorFor, PgBackend};
-pub use config::{
-    DEFAULT_APP_CONFIG_PATH, DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, app_config_path,
-    app_env_prefix, deprecated_config_names, load_figment, load_figment_for_app, load_figment_from,
-    load_figment_from_for_app, load_figment_from_with_prefix, load_figment_with_prefix,
-};
+pub use config::{DEFAULT_CONFIG_PATH, Sections, env_prefix, load_figment, load_figment_from};
 pub use ctx::{BoxFuture, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry};
 pub use dupe::{Dupe, Dupe_};
 pub use error::{BoxedError, Error, Result};

@@ -23,7 +23,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa::Result<()> {
-//!     App::default()
+//!     muxa::app!()
 //!         .with_plugin(SentryPlugin).await?
 //!         .with_plugin(OtelPlugin).await?
 //!         // ... add WebPlugin last

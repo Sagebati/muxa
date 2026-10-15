@@ -17,7 +17,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa::Result<()> {
-//!     App::default()
+//!     muxa::app!()
 //!         .with_plugin(WebPlugin::new(my_routes)).await?
 //!         .run().await
 //! }
@@ -153,7 +153,7 @@ fn schedule_serve(cfg: WebConfig, ctx: &mut BuildCtx) -> Result<()> {
 /// use muxa::aide::{axum::ApiRouter, openapi::OpenApi};
 ///
 /// let openapi = OpenApi::default(); // set info.title / version as needed
-/// App::default()
+/// muxa::app!()
 ///     .with_plugin(ApiPlugin::new(move |_s| my_api_router(), openapi)).await?
 ///     .run().await
 /// ```

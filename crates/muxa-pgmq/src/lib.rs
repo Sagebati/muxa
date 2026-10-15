@@ -34,7 +34,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa::Result<()> {
-//!     App::default()
+//!     muxa::app!()
 //!         .with_plugin(SqlxPlugin::default()).await?
 //!         .with_plugin(PgmqPlugin::<SqlxBackend, _>::new().queues(["jobs"])).await?
 //!         // ... add WebPlugin last

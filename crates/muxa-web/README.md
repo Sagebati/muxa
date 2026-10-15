@@ -17,7 +17,7 @@ fn routes<S>(_state: &S) -> Router {
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    muxa::app!()
         .with_plugin(WebPlugin::new(routes)).await?
         .run().await
 }
@@ -55,11 +55,11 @@ A bare closure, `WebPlugin::new(move |_state| router)`, does not compile: the cl
 
 ### Config
 
-`[web]`, or `MUXA_WEB__*`:
+`[web]`, or `<APP>_WEB__*`:
 
 | Key | Default | |
 |---|---|---|
-| `host` | `"0.0.0.0"` | bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, `"[::1]"`) or a hostname such as `"localhost"`. In an env var write IPv6 bare (`MUXA_WEB__HOST=::1`): figment reads an unquoted `[::1]` as a list |
+| `host` | `"0.0.0.0"` | bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, `"[::1]"`) or a hostname such as `"localhost"`. In an env var write IPv6 bare (`<APP>_WEB__HOST=::1`): figment reads an unquoted `[::1]` as a list |
 | `port` | `3000` | `0` lets the OS pick |
 | `banner` | `true` | print the launch banner to stderr |
 
@@ -107,7 +107,7 @@ async fn main() -> muxa::Result<()> {
         },
         ..OpenApi::default()
     };
-    App::default()
+    muxa::app!()
         .with_plugin(ApiPlugin::new(api, seed)).await?
         .run().await
 }
@@ -122,7 +122,7 @@ Its config, `ApiConfig`, is two sections: `[web]` for the listener and `[openapi
 With the `ratelimit` feature, `ratelimit::per_ip_layer` builds a per-client-IP tower layer on [tower_governor](https://docs.rs/tower_governor). Apply it to the routes you want to protect:
 
 ```rust
-let app = App::default().with_plugin(OtelPlugin).await?;
+let app = muxa::app!().with_plugin(OtelPlugin).await?;
 
 let cfg: RateLimitConfig = app
     .figment()
