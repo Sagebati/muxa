@@ -35,8 +35,9 @@ pub mod state;
 pub use app::{App, AppBuilder};
 pub use capability::{HasPgExecutorFor, PgBackend};
 pub use config::{
-    DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, load_figment, load_figment_from,
-    load_figment_from_with_prefix, load_figment_with_prefix,
+    DEFAULT_CONFIG_PATH, DEFAULT_ENV_PREFIX, Sections, legacy_app_env_vars, load_figment,
+    load_figment_from, load_figment_from_with_app_prefix, load_figment_from_with_prefix,
+    load_figment_with_app_prefix, load_figment_with_prefix,
 };
 pub use ctx::{BoxFuture, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry};
 pub use dupe::{Dupe, Dupe_};

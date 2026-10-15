@@ -64,6 +64,36 @@ impl AppBuilder<HNil> {
     pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
         Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
     }
+
+    /// Like [`AppBuilder::default`], plus an app-owned env prefix for the
+    /// app's own config sections. muxa's sections and `MUXA_ENV` stay on
+    /// `MUXA_*`; `{prefix}<SECTION>__*` sets `app_sections` and wins over
+    /// `MUXA_<SECTION>__*` (still read, at lower precedence), and
+    /// `{prefix}CONFIG` names the config file ahead of `MUXA_CONFIG`. The
+    /// prefix should include its trailing separator.
+    ///
+    /// ```ignore
+    /// App::with_app_env_prefix("MYAPP_", &["engine", "worker"])
+    /// ```
+    ///
+    /// Logs one warning per legacy `MUXA_<SECTION>__*` var still set (name
+    /// only, never the value) once the subscriber is installed.
+    ///
+    /// See [`crate::config::load_figment_with_app_prefix`].
+    pub fn with_app_env_prefix(prefix: &str, app_sections: &[&str]) -> Self {
+        let app = Self::with_figment(crate::config::load_figment_with_app_prefix(
+            prefix,
+            app_sections,
+        ));
+        for (legacy, renamed) in crate::config::legacy_app_env_vars(prefix, app_sections) {
+            tracing::warn!(
+                legacy = %legacy,
+                renamed = %renamed,
+                "deprecated env var {legacy}: still applied, but {renamed} takes precedence; rename it"
+            );
+        }
+        app
+    }
 }
 
 impl Default for AppBuilder<HNil> {
