@@ -38,7 +38,7 @@ fn default_metric_interval_secs() -> u64 {
     60
 }
 
-/// Configuration for [`OtelPlugin`]. Read from `[otel]` (and `MUXA_OTEL__*`).
+/// Configuration for [`OtelPlugin`]. Read from `[otel]` (and `<APP>_OTEL__*`).
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct OtelConfig {

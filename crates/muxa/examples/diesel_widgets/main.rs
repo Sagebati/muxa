@@ -155,9 +155,12 @@ where
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::with_config_file(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/examples/diesel_widgets/muxa.toml"
+    App::with_figment(muxa::load_figment_from(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/diesel_widgets/config.toml"
+        ),
+        "diesel-widgets",
     ))
     // Observability first so later plugins' logs have a subscriber.
     .with_plugin(OtelPlugin)

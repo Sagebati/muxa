@@ -7,7 +7,7 @@ Through the facade this is the `sentry` feature.
 ## Usage
 
 ```rust
-App::default()
+muxa::app!()
     .with_plugin(SentryPlugin).await?    // early, so later plugins' startup logs and panics reach Sentry
     .with_plugin(OtelPlugin).await?
     // … other plugins, WebPlugin last
@@ -20,7 +20,7 @@ dsn = "https://<key>@<org>.ingest.sentry.io/<project>"
 release = "my-app@1.2.3"
 ```
 
-The DSN is a secret. Prefer the environment: `MUXA_SENTRY__DSN=…`.
+The DSN is a secret. Prefer the environment: `<APP>_SENTRY__DSN=…`.
 
 The plugin does three things:
 
@@ -32,7 +32,7 @@ Anything that already emits `tracing` spans shows up in Sentry through that brid
 
 ## Config
 
-`[sentry]`, or `MUXA_SENTRY__*`:
+`[sentry]`, or `<APP>_SENTRY__*`:
 
 | Key | Default | |
 |---|---|---|

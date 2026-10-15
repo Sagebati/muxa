@@ -11,7 +11,7 @@
 //!    tasks, serve loop).
 //!
 //! Plugins are composed at compile time via the chain
-//! `App::default().with_plugin(p1).await?.with_plugin(p2).await?...` — there is
+//! `muxa::app!().with_plugin(p1).await?.with_plugin(p2).await?...` — there is
 //! no `dyn Plugin` and no runtime registry.
 
 use core::future::Future;
@@ -39,7 +39,7 @@ pub trait Plugin<S: State>: Sized + Send + 'static {
     /// Name of the configuration section this plugin reads.
     ///
     /// E.g. `const CONFIG_PREFIX: &'static str = "pgmq";` reads the `[pgmq]`
-    /// table from TOML and `MUXA_PGMQ__*` env vars.
+    /// table from TOML and `<APP>_PGMQ__*` env vars.
     ///
     /// Use the empty string `""` for "this plugin has no configuration" —
     /// the default `read_config` will return `Self::Config::default()`.

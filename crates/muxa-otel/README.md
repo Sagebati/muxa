@@ -7,7 +7,7 @@ Through the facade this is the `otel` feature (on by default) and the `otel-*` f
 ## Usage
 
 ```rust
-App::default()
+muxa::app!()
     .with_plugin(OtelPlugin).await?      // early, so later plugins' startup logs are exported too
     // … other plugins, WebPlugin last
     .run().await
@@ -65,7 +65,7 @@ When the app shuts down, a background task flushes every provider, and `App::run
 
 ## Config
 
-`[otel]`, or `MUXA_OTEL__*`:
+`[otel]`, or `<APP>_OTEL__*`:
 
 | Key | Default | |
 |---|---|---|

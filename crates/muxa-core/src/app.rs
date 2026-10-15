@@ -1,6 +1,5 @@
 //! `App` and `AppBuilder` — the entry point and plugin-chain accumulator.
 
-use std::path::Path;
 use std::time::Duration;
 
 use figment::Figment;
@@ -20,8 +19,8 @@ const TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// Entry point — a friendly alias for an empty [`AppBuilder`].
 ///
-/// Construct with `App::default()` (uses the default figment lookup),
-/// `App::with_config_file(path)`, or `App::with_figment(fig)`.
+/// Construct with [`crate::app!`] (configuration named after the calling
+/// crate), [`App::named`], or [`App::with_figment`].
 pub type App = AppBuilder<HNil>;
 
 /// Application builder.
@@ -43,35 +42,14 @@ impl AppBuilder<HNil> {
         }
     }
 
-    /// Create an empty builder loading config from an explicit file path.
-    /// Useful when you want to ship `muxa.toml` next to a binary, in a
-    /// system path, etc.
-    pub fn with_config_file<P: AsRef<Path>>(path: P) -> Self {
-        Self::with_figment(crate::config::load_figment_from(path))
-    }
-
-    /// Like [`AppBuilder::default`], but reads env vars with a custom prefix
-    /// instead of `MUXA_`. The bootstrap config-path var becomes
-    /// `{prefix}CONFIG` (e.g. prefix `MYAPP_` → `$MYAPP_CONFIG`). The prefix
-    /// should include its trailing separator.
-    pub fn with_env_prefix(prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_with_prefix(prefix))
-    }
-
-    /// Like [`AppBuilder::with_config_file`], but reads env vars with a custom
-    /// prefix instead of `MUXA_`. The prefix should include its trailing
-    /// separator.
-    pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_from_with_prefix(path, prefix))
-    }
-}
-
-impl Default for AppBuilder<HNil> {
-    /// Equivalent to `AppBuilder::with_figment(load_figment())` — uses the
-    /// default figment lookup (`./muxa.toml`, overridable via
-    /// `MUXA_CONFIG=path/to/file.toml`, merged with `MUXA_*` env vars).
-    fn default() -> Self {
-        Self::with_figment(crate::config::load_figment())
+    /// Create an empty builder whose configuration is named after the app:
+    /// `config.toml` (or `$<PREFIX>CONFIG`) merged with `<PREFIX>*` env vars,
+    /// where `"katago-ws"` gives the prefix `KATAGO_WS_`. Usually called
+    /// through [`crate::app!`], which passes the calling crate's package name.
+    ///
+    /// See [`crate::config::load_figment`].
+    pub fn named(app_name: &str) -> Self {
+        Self::with_figment(crate::config::load_figment(app_name))
     }
 }
 

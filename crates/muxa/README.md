@@ -24,7 +24,7 @@ fn routes<S>(_state: &S) -> Router {
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    muxa::app!()
         .with_plugin(OtelPlugin).await?
         .with_plugin(WebPlugin::new(routes)).await?
         .run().await
@@ -94,13 +94,15 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 
 ## Configuration
 
-Two layers, last one wins:
+`muxa::app!()` names the configuration after your crate, so nothing operators see says "muxa". For a crate `myapp`, two layers, last one wins:
 
-1. one TOML file: `$MUXA_CONFIG` if set, otherwise `./muxa.toml`. A missing file is fine.
-2. environment variables prefixed `MUXA_`, with `__` between keys: `MUXA_WEB__PORT=8080` sets `web.port`.
+1. one TOML file: `$MYAPP_CONFIG` if set, otherwise `./config.toml`. A missing file is fine.
+2. environment variables prefixed `MYAPP_`, with `__` between keys: `MYAPP_WEB__PORT=8080` sets `web.port`, `MYAPP_ENV=production` the run mode.
+
+The prefix is the crate name uppercased, with anything that isn't a letter or digit turned into `_` (`katago-ws` → `KATAGO_WS_`). The plugin READMEs write it as `<APP>_`.
 
 ```toml
-# muxa.toml
+# config.toml
 env = "production"        # optional: development | production
 
 [web]
@@ -115,10 +117,9 @@ Each plugin reads one section, and a missing section means that plugin's default
 
 | Constructor | Config file | Env prefix |
 |---|---|---|
-| `App::default()` | `$MUXA_CONFIG` or `./muxa.toml` | `MUXA_` |
-| `App::with_config_file(path)` | `path` | `MUXA_` |
-| `App::with_env_prefix("MYAPP_")` | `$MYAPP_CONFIG` or `./muxa.toml` | `MYAPP_` |
-| `App::with_config_file_and_env_prefix(path, "MYAPP_")` | `path` | `MYAPP_` |
+| `muxa::app!()` | `$<APP>_CONFIG` or `./config.toml` | from the crate name |
+| `App::named("myapp")` | `$MYAPP_CONFIG` or `./config.toml` | `MYAPP_` |
+| `App::with_figment(muxa::load_figment_from(path, "myapp"))` | `path` | `MYAPP_` |
 | `App::with_figment(figment)` | whatever you built | whatever you built |
 
 Log verbosity comes from `RUST_LOG` (default `info`).

@@ -1,4 +1,8 @@
 //! figment-based configuration loading.
+//!
+//! An app's configuration is named after the app: env vars carry a prefix
+//! derived from its name (`katago-ws` → `KATAGO_WS_WEB__PORT`) and the file is
+//! `config.toml`. The framework's own name never shows up in either.
 
 use std::path::Path;
 
@@ -8,68 +12,58 @@ use serde::de::DeserializeOwned;
 
 use crate::error::Result;
 
-/// Default config-file path: `muxa.toml` in the current directory.
-pub const DEFAULT_CONFIG_PATH: &str = "muxa.toml";
+/// Default config-file path: `config.toml` in the current directory.
+pub const DEFAULT_CONFIG_PATH: &str = "config.toml";
 
-/// Default environment-variable prefix: `MUXA_`.
-///
-/// The prefix includes its trailing separator. Override it via
-/// [`load_figment_with_prefix`] / [`load_figment_from_with_prefix`] (or the
-/// matching [`crate::AppBuilder`] constructors) so an app can read, e.g.,
-/// `MYAPP_PGMQ__URL` instead of `MUXA_PGMQ__URL`.
-pub const DEFAULT_ENV_PREFIX: &str = "MUXA_";
-
-/// Build the application figment using the default lookup rules.
-///
-/// Layers (last wins):
-/// 1. A single TOML file. Path comes from `$MUXA_CONFIG` if set, else
-///    `./muxa.toml`. Missing file is fine.
-/// 2. Environment variables prefixed `MUXA_`, with `__` as key separator.
-///    e.g. `MUXA_PGMQ__URL=postgres://...` maps to `pgmq.url`.
-///
-/// To use a different config file path from code, build the figment
-/// yourself and pass it to [`crate::AppBuilder::with_figment`], or call
-/// [`load_figment_from`]. To use a different env-var prefix, call
-/// [`load_figment_with_prefix`].
-pub fn load_figment() -> Figment {
-    load_figment_with_prefix(DEFAULT_ENV_PREFIX)
+/// The env-var prefix for an app name: uppercased, with every character that
+/// isn't ASCII alphanumeric replaced by `_`, plus a trailing `_`.
+/// `"katago-ws"` → `"KATAGO_WS_"`.
+#[must_use]
+pub fn env_prefix(app_name: &str) -> String {
+    let mut prefix: String = app_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    prefix.push('_');
+    prefix
 }
 
-/// Build the application figment with a custom env-var prefix.
+/// Build an app's figment. Layers (last wins):
 ///
-/// Same as [`load_figment`], but env vars are read with `prefix` instead of
-/// `MUXA_`, and the bootstrap config-path var becomes `{prefix}CONFIG`
-/// (e.g. prefix `MYAPP_` → `$MYAPP_CONFIG`). The prefix should include its
-/// trailing separator (matching figment's `Env::prefixed` convention).
-pub fn load_figment_with_prefix(prefix: &str) -> Figment {
-    match std::env::var_os(format!("{prefix}CONFIG")) {
-        Some(path) => load_figment_from_with_prefix(path, prefix),
-        None => load_figment_from_with_prefix(DEFAULT_CONFIG_PATH, prefix),
+/// 1. One TOML file: `$<PREFIX>CONFIG` if set, else `./config.toml`. A missing
+///    file is fine.
+/// 2. Env vars with the app's [`env_prefix`], `__` as the key separator: for
+///    `katago-ws`, `KATAGO_WS_PGMQ__URL` sets `pgmq.url` and `KATAGO_WS_ENV`
+///    the run mode.
+///
+/// [`crate::app!`] calls this (through [`crate::AppBuilder::named`]) with the
+/// calling crate's package name.
+#[must_use]
+pub fn load_figment(app_name: &str) -> Figment {
+    match std::env::var_os(format!("{}CONFIG", env_prefix(app_name))) {
+        Some(path) => load_figment_from(path, app_name),
+        None => load_figment_from(DEFAULT_CONFIG_PATH, app_name),
     }
 }
 
-/// Build the application figment from a specific config-file path.
-///
-/// Same env-var layering as [`load_figment`], but the file path is
-/// supplied explicitly.
-pub fn load_figment_from<P: AsRef<Path>>(path: P) -> Figment {
-    load_figment_from_with_prefix(path, DEFAULT_ENV_PREFIX)
-}
-
-/// Build the application figment from an explicit path with a custom
-/// env-var prefix.
-///
-/// The most general loader: combines the explicit-path behaviour of
-/// [`load_figment_from`] with the custom prefix of
-/// [`load_figment_with_prefix`]. The prefix should include its trailing
-/// separator.
-pub fn load_figment_from_with_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Figment {
+/// Like [`load_figment`], with the config-file path supplied explicitly.
+#[must_use]
+pub fn load_figment_from<P: AsRef<Path>>(path: P, app_name: &str) -> Figment {
     Figment::new()
         .merge(Toml::file(path))
-        // Strip the framework's own bootstrap env var so it doesn't leak
-        // into the figment as a top-level `config` key. (The `{prefix}CONFIG`
-        // var maps to the `config` key once the prefix is stripped.)
-        .merge(Env::prefixed(prefix).split("__").ignore(&["config"]))
+        // `<PREFIX>CONFIG` picks the file; keep it out of the tree, where it
+        // would land as a top-level `config` key.
+        .merge(
+            Env::prefixed(&env_prefix(app_name))
+                .split("__")
+                .ignore(&["config"]),
+        )
 }
 
 /// A plugin's view of the application configuration: named sections, read one
@@ -90,7 +84,7 @@ impl<'figment> Sections<'figment> {
     }
 
     /// Deserialize the section at `prefix` (e.g. `"pgmq"` for the `[pgmq]`
-    /// table and `MUXA_PGMQ__*` env vars).
+    /// table and `<APP>_PGMQ__*` env vars).
     ///
     /// * `prefix` is `""` — "no configuration": returns `T::default()`.
     /// * The section is absent — returns `T::default()`.
@@ -113,27 +107,6 @@ impl<'figment> Sections<'figment> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    #[allow(
-        clippy::result_large_err,
-        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
-    )]
-    fn custom_prefix_reads_namespaced_env_vars() {
-        figment::Jail::expect_with(|jail| {
-            jail.set_env("MYAPP_PGMQ__URL", "postgres://example");
-
-            let fig = load_figment_from_with_prefix("does-not-exist.toml", "MYAPP_");
-            let url: String = fig.extract_inner("pgmq.url").unwrap();
-            assert_eq!(url, "postgres://example");
-
-            // The default prefix must NOT pick up the custom-prefixed var.
-            let default = load_figment_from_with_prefix("does-not-exist.toml", DEFAULT_ENV_PREFIX);
-            assert!(default.extract_inner::<String>("pgmq.url").is_err());
-
-            Ok(())
-        });
-    }
 
     #[derive(serde::Deserialize, Default, Debug, PartialEq, Eq)]
     struct Limits {
@@ -162,5 +135,61 @@ mod tests {
     fn section_present_but_invalid_is_an_error() {
         let fig = Figment::new().merge(Toml::string("[limits]\nmax = \"many\"\n"));
         assert!(Sections::new(&fig).get::<Limits>("limits").is_err());
+    }
+
+    const APP: &str = "katago-ws";
+
+    #[test]
+    fn env_prefix_derives_from_the_name() {
+        assert_eq!(env_prefix("katago-ws"), "KATAGO_WS_");
+        assert_eq!(env_prefix("my.app"), "MY_APP_");
+        assert_eq!(env_prefix("MyApp2"), "MYAPP2_");
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn env_overrides_the_file_under_the_app_prefix() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "config.toml",
+                "env = \"dev\"\n[web]\nport = 1\nhost = \"file\"\n",
+            )?;
+            jail.set_env("KATAGO_WS_WEB__PORT", "3000");
+            jail.set_env("KATAGO_WS_ENV", "production");
+            // Another app's (or the framework's old) prefix is not read.
+            jail.set_env("MUXA_WEB__HOST", "muxa");
+            jail.set_env("OTHER_WEB__HOST", "other");
+
+            let fig = load_figment(APP);
+            assert_eq!(fig.extract_inner::<u16>("web.port").unwrap(), 3000);
+            assert_eq!(fig.extract_inner::<String>("web.host").unwrap(), "file");
+            assert_eq!(
+                crate::RunMode::from_figment(&fig),
+                crate::RunMode::Production
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn config_var_picks_the_file_and_stays_out_of_the_tree() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("config.toml", "[web]\nport = 1\n")?;
+            jail.create_file("prod.toml", "[web]\nport = 2\n")?;
+            let port = || load_figment(APP).extract_inner::<u16>("web.port").unwrap();
+
+            assert_eq!(port(), 1);
+            jail.set_env("KATAGO_WS_CONFIG", "prod.toml");
+            assert_eq!(port(), 2);
+            assert!(load_figment(APP).find_value("config").is_err());
+            Ok(())
+        });
     }
 }

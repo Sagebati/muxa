@@ -32,7 +32,7 @@ Some crates have feature-gated tests/impls — when testing a specific crate, pa
 An app is built by chaining plugins, each `await`ed:
 
 ```rust
-App::with_config_file("muxa.toml")
+muxa::app!()                            // config named after the calling crate
     .with_plugin(OtelPlugin).await?      // observability first
     .with_plugin(SqlitePlugin).await?    // a DB pool
     .with_plugin(WebPlugin::new(routes)).await?  // web ALWAYS last
@@ -74,11 +74,11 @@ At `App::run`: background tasks are spawned, the router is `compose()`d (auto-mo
 
 ### Config
 
-figment-based (`muxa-core/src/config.rs`). Layered, last wins:
-1. one TOML file — `$MUXA_CONFIG` if set, else `./muxa.toml` (missing file is fine);
-2. env vars prefixed `MUXA_`, `__` as the key separator — `MUXA_PGMQ__URL` → `pgmq.url`.
+figment-based (`muxa-core/src/config.rs`). An app's configuration is **named after the app**, never after muxa: `muxa::app!()` = `App::named(env!("CARGO_PKG_NAME"))`, and the env prefix is derived from that name (`env_prefix("katago-ws")` = `KATAGO_WS_`). Layered, last wins:
+1. one TOML file — `$<PREFIX>CONFIG` if set, else `./config.toml` (missing file is fine);
+2. env vars with the app's prefix, `__` as the key separator — `KATAGO_WS_PGMQ__URL` → `pgmq.url`, `KATAGO_WS_ENV` → the run mode.
 
-The `MUXA_` env prefix is the default (`DEFAULT_ENV_PREFIX`) but is **configurable** so a consumer app can namespace its own env vars: `App::with_env_prefix("MYAPP_")` or `App::with_config_file_and_env_prefix(path, "MYAPP_")` (and the free fns `load_figment_with_prefix` / `load_figment_from_with_prefix`). A custom prefix also renames the bootstrap config-path var to `{prefix}CONFIG`. The prefix includes its trailing separator.
+`App::with_figment(load_figment_from(path, name))` is the escape hatch (the examples use it to pin their file to the manifest dir). There is no `App::default()` and no `MUXA_` prefix: a plain function can't see its caller's crate name, so the macro is the entry point. In docs, write a plugin's env vars as `<APP>_PGMQ__*`.
 
 Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`, a present-but-invalid one is an error. Use `""` for "no config". A plugin made of several sections overrides `read_config` and reads each with `Sections::get` (see `ApiPlugin`: `[web]` + `[openapi]`); that is the only place plugin code touches configuration, and it can't see more than the sections it names. Don't print raw configuration anywhere — values are plain strings there. Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` in the typed `Config` so Debug/logs redact them.
 

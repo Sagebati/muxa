@@ -23,7 +23,7 @@ where
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    muxa::app!()
         .with_plugin(OtelPlugin).await?
         .with_plugin(SqlxPlugin).await?
         .with_plugin(WebPlugin::new(routes)).await?
@@ -33,7 +33,7 @@ async fn main() -> muxa::Result<()> {
 
 `SqlxPlugin` connects at startup and pushes a `SqlxPool` onto the app state.
 
-`[sqlx]`, or `MUXA_SQLX__*`:
+`[sqlx]`, or `<APP>_SQLX__*`:
 
 | Key | Default | |
 |---|---|---|
@@ -47,7 +47,7 @@ async fn main() -> muxa::Result<()> {
 
 `SqlitePlugin` pushes a `SqlitePool`. Use it the same way, with `Selector<SqlitePool, Idx>`.
 
-`[sqlite]`, or `MUXA_SQLITE__*`:
+`[sqlite]`, or `<APP>_SQLITE__*`:
 
 | Key | Default | |
 |---|---|---|

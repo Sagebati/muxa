@@ -39,7 +39,7 @@ async fn main() -> muxa::Result<()> {
         .api_route("/thing", get(thing))
         .finish_api(&mut api);
 
-    App::default()
+    muxa::app!()
         .with_plugin(OpenApiPlugin::new(api)).await?       // /openapi.json + /docs
         .with_plugin(WebPlugin::new(with_router(router))).await?
         .run().await
@@ -50,7 +50,7 @@ async fn main() -> muxa::Result<()> {
 
 ## Config
 
-`[openapi]`, or `MUXA_OPENAPI__*`:
+`[openapi]`, or `<APP>_OPENAPI__*`:
 
 | Key | Default | |
 |---|---|---|
