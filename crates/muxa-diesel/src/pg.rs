@@ -7,7 +7,7 @@ use diesel_async::AsyncPgConnection;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
 use dupe::Dupe;
-use muxa_core::{BuildCtx, Error, PgBackend, Plugin, Result, State};
+use muxa_core::{BuildCtx, EnvFallback, Error, PgBackend, Plugin, Result, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
@@ -45,7 +45,8 @@ fn default_max_connections() -> u32 {
     10
 }
 
-/// Configuration for [`DieselPlugin`]. Read from `[diesel]`.
+/// Configuration for [`DieselPlugin`]. Read from `[diesel]`; `DATABASE_URL`
+/// fills `url` when the app's configuration leaves it unset.
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(default)]
 pub struct DieselConfig {
@@ -115,11 +116,15 @@ impl<S: State> Plugin<S> for DieselPlugin {
     type Output = DieselPool;
     type Config = DieselConfig;
     const CONFIG_PREFIX: &'static str = "diesel";
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[EnvFallback {
+        var: "DATABASE_URL",
+        key: "url",
+    }];
 
     async fn build(self, cfg: DieselConfig, _state: &S, _ctx: &mut BuildCtx) -> Result<DieselPool> {
         if cfg.url.expose_secret().is_empty() {
             return Err(Error::other(
-                "muxa-diesel: `diesel.url` is required (set `[diesel] url` in config.toml or the app's `<APP>_DIESEL__URL` env var)",
+                "muxa-diesel: `diesel.url` is required (set `[diesel] url` in config.toml, the app's `<APP>_DIESEL__URL` env var, or `DATABASE_URL`)",
             ));
         }
 

@@ -78,6 +78,8 @@ figment-based (`muxa-core/src/config.rs`). An app's configuration is **named aft
 1. one TOML file — `$<PREFIX>CONFIG` if set, else `./config.toml` (missing file is fine);
 2. env vars with the app's prefix, `__` as the key separator — `KATAGO_WS_PGMQ__URL` → `pgmq.url`, `KATAGO_WS_ENV` → the run mode.
 
+Below both layers sit a plugin's `ENV_FALLBACKS` (`EnvFallback { var, key }`): conventional unprefixed vars (`DATABASE_URL`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `PORT`) that fill a key of the plugin's section only when the file and `<APP>_*` leave it unset. Applied per plugin in `Sections::get_or_env` (the default `read_config` passes them), so `AppBuilder::figment()` doesn't show them. Don't map `HOST` — shells set it to the hostname.
+
 `App::with_figment(load_figment_from(path, name))` is the escape hatch (the examples use it to pin their file to the manifest dir). There is no `App::default()` and no `MUXA_` prefix: a plain function can't see its caller's crate name, so the macro is the entry point. In docs, write a plugin's env vars as `<APP>_PGMQ__*`.
 
 Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`, a present-but-invalid one is an error. Use `""` for "no config". A plugin made of several sections overrides `read_config` and reads each with `Sections::get` (see `ApiPlugin`: `[web]` + `[openapi]`); that is the only place plugin code touches configuration, and it can't see more than the sections it names. Don't print raw configuration anywhere — values are plain strings there. Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` in the typed `Config` so Debug/logs redact them.

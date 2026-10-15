@@ -51,6 +51,7 @@ impl<S: State> Plugin<S> for GreeterPlugin {
 - `Output` is `()` for a plugin that only registers routes, tasks or middleware.
 - `Config` must implement `Default`. When the section is missing, the plugin gets the default. A section that is present but does not deserialize is an error, so a typo fails startup. Set `CONFIG_PREFIX` to `""` for a plugin with no config.
 - A plugin sees only the sections it names, never the whole configuration. To build `Config` from more than one section, override `read_config` and call `sections.get("name")` for each.
+- To accept a conventional unprefixed env var, list it in `ENV_FALLBACKS`: `EnvFallback { var: "DATABASE_URL", key: "url" }` fills `url` from `DATABASE_URL` when neither the file nor `<APP>_*` sets it. A multi-section `read_config` uses `sections.get_or_env("name", FALLBACKS)`.
 - The future returned by `build` does not have to be `Send`. It is awaited inline, never spawned. Background tasks do have to be `Send + 'static`.
 - If `build` fails, `with_plugin` returns `Error::PluginBuild` tagged with the plugin's type name.
 

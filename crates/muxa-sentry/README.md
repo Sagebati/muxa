@@ -20,7 +20,7 @@ dsn = "https://<key>@<org>.ingest.sentry.io/<project>"
 release = "my-app@1.2.3"
 ```
 
-The DSN is a secret. Prefer the environment: `<APP>_SENTRY__DSN=…`.
+The DSN is a secret. Prefer the environment: `<APP>_SENTRY__DSN=…`, or the SDK's own `SENTRY_DSN`.
 
 The plugin does three things:
 
@@ -32,7 +32,7 @@ Anything that already emits `tracing` spans shows up in Sentry through that brid
 
 ## Config
 
-`[sentry]`, or `<APP>_SENTRY__*`:
+`[sentry]`, or `<APP>_SENTRY__*`. When the app sets neither, `SENTRY_DSN`, `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` fill `dsn`, `environment` and `release`:
 
 | Key | Default | |
 |---|---|---|

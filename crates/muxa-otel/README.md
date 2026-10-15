@@ -65,12 +65,12 @@ When the app shuts down, a background task flushes every provider, and `App::run
 
 ## Config
 
-`[otel]`, or `<APP>_OTEL__*`:
+`[otel]`, or `<APP>_OTEL__*`. When the app sets neither, `OTEL_SERVICE_NAME` and `OTEL_EXPORTER_OTLP_ENDPOINT` fill `service_name` and `endpoint`:
 
 | Key | Default | |
 |---|---|---|
 | `service_name` | `"muxa-app"` | the `service.name` resource attribute |
-| `endpoint` | unset | OTLP collector, e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP) |
+| `endpoint` | unset | OTLP collector, e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP). Over HTTP it's a base URL: each signal goes to `/v1/traces`, `/v1/metrics` or `/v1/logs` under it |
 | `timeout_secs` | `10` | per-export request timeout |
 | `metric_interval_secs` | `60` | how often metrics are pushed |
 

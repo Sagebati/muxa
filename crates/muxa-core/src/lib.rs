@@ -44,7 +44,9 @@ macro_rules! app {
     };
 }
 pub use capability::{HasPgExecutorFor, PgBackend};
-pub use config::{DEFAULT_CONFIG_PATH, Sections, env_prefix, load_figment, load_figment_from};
+pub use config::{
+    DEFAULT_CONFIG_PATH, EnvFallback, Sections, env_prefix, load_figment, load_figment_from,
+};
 pub use ctx::{BoxFuture, BuildCtx, Mount, RouterRegistry, ServeFn, ShutdownToken, TaskRegistry};
 pub use dupe::{Dupe, Dupe_};
 pub use error::{BoxedError, Error, Result};
@@ -56,7 +58,7 @@ pub use state::{HCons, HNil, Here, Selector, State, There};
 /// Common imports for application and plugin code.
 pub mod prelude {
     pub use crate::{
-        App, AppBuilder, BuildCtx, Dupe, Error, HasPgExecutorFor, PgBackend, Plugin, Result,
-        RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
+        App, AppBuilder, BuildCtx, Dupe, EnvFallback, Error, HasPgExecutorFor, PgBackend, Plugin,
+        Result, RouterRegistry, RunMode, Selector, ShutdownToken, State, TaskRegistry,
     };
 }
