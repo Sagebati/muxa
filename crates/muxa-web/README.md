@@ -155,6 +155,69 @@ Things to know:
 - Leave `trust_forwarded_for` off unless a proxy you control sets those headers, or clients can spoof their IP. With it off behind a proxy, every client shares the proxy's bucket.
 - `per_ip_layer` spawns a small cleanup task, so call it inside a Tokio runtime. The task ends once the router is dropped.
 
+## Single-page app
+
+With the `spa` feature (facade: `spa`), `SpaPlugin` serves a frontend build (Vite or similar) from memory as the app's fallback, so one binary serves both the API and the UI. The files are collected at compile time by [memory-serve](https://docs.rs/memory-serve): embedded in release builds, read from disk in debug builds so a rebuilt frontend shows up without recompiling.
+
+Add `memory-serve = "2.4"` as a build-dependency and collect the build in `build.rs`:
+
+```rust
+fn main() {
+    let dist = std::path::Path::new("../frontend/dist");
+    println!("cargo::rerun-if-changed={}", dist.display());
+    if dist.is_dir() {
+        memory_serve::load_directory(dist);
+    } else {
+        // No frontend build: an empty asset set, and SpaPlugin stays inert.
+        memory_serve::load_names_directories(std::iter::empty::<(&str, &str)>(), false);
+    }
+}
+```
+
+Then pass `spa_assets!()` to the plugin. Add it before the web plugin:
+
+```rust
+use muxa::prelude::*;
+
+#[tokio::main]
+async fn main() -> muxa::Result<()> {
+    muxa::app!()
+        .with_plugin(SpaPlugin::new(spa_assets!())).await?
+        .with_plugin(ApiPlugin::new(api, seed)).await?
+        .run().await
+}
+```
+
+`spa_assets!()` picks the first directory `build.rs` loaded, `spa_assets!("name")` the one of that name. If the set is empty, or has no `/index.html`, the plugin logs a warning and registers nothing, so the app builds and runs without a frontend. The app needs no runtime `memory-serve` dependency: the macro goes through `muxa_web::spa::memory_serve`.
+
+The plugin registers a fallback (`RouterRegistry::fallback`), not a mount, so API routes win wherever it sits in the chain. Before the web plugin is still the recommended place: that one goes last, and its launch banner only lists what was registered before it. An app has one fallback; a second one fails the build.
+
+What a request gets once no API route matched:
+
+| Request | Response | `Cache-Control` |
+|---|---|---|
+| a file of the build under `/assets/` | the file | `max-age=31536000, immutable` |
+| `/`, `/index.html`, any HTML file | the file | `no-cache` |
+| `/sw.js` (the `no_cache` list) | the file | `no-cache` |
+| any other file of the build | the file | `max-age=604800, stale-while-revalidate=86400` |
+| a missing file under `/assets/` | plain 404 | |
+| a path under an excluded prefix (`/api/nope`) | plain 404 | |
+| any other `GET`/`HEAD` (`/games/1`) | `index.html`, for the client-side router | `no-cache` |
+| any other method | plain 404 | |
+
+Files read from disk (debug builds) are all `no-cache`. ETags, `304 Not Modified` and gzip/brotli come from memory-serve.
+
+`[spa]`, or `<APP>_SPA__*`:
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | `false` registers nothing |
+| `exclude_prefixes` | `["/api", "/health", "/openapi.json", "/docs"]` | server paths that never get `index.html`; matched per segment, so `/api` covers `/api/x` but not `/apiary` |
+| `assets_prefix` | `"/assets"` | where the bundler puts fingerprinted files |
+| `no_cache` | `["/sw.js"]` | files that must never be cached |
+
+Nested routers without a fallback of their own fall through to the app's, so `/api/nope` reaches the SPA fallback when `/api` is a nested router; that is why server prefixes must be listed in `exclude_prefixes`. See `cargo run -p muxa --example spa --features spa`.
+
 ## Features
 
 | Feature | Default | Effect |
@@ -162,6 +225,7 @@ Things to know:
 | `graceful-shutdown` | yes | ctrl-c handling (`tokio/signal`) |
 | `openapi` | | `ApiPlugin` |
 | `ratelimit` | | the `ratelimit` module |
+| `spa` | | `SpaPlugin`, `spa_assets!` (memory-serve) |
 
 ## License
 

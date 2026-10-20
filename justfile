@@ -16,6 +16,7 @@ fmt-check:
 # Run clippy across the workspace, treating warnings as errors.
 lint:
     cargo clippy --workspace --all-targets --no-deps -- -D warnings
+    cargo clippy -p muxa-auth --all-features --all-targets --no-deps -- -D warnings
 
 # Run the default-feature test suite.
 test:
@@ -25,8 +26,19 @@ test:
 test-pgmq:
     cargo test -p muxa-pgmq --features sqlx,diesel-async --tests
 
-# fmt-check + lint + tests + pgmq capability tests. What CI should run.
-check: fmt-check lint test test-pgmq
+# Lint + test the SPA serving (muxa-web's `spa` feature, off by default) and its
+# example.
+test-spa:
+    cargo clippy --workspace --all-targets --no-deps --features muxa-web/spa,muxa/spa -- -D warnings
+    cargo test -p muxa-web --features spa
+
+# muxa-auth with every feature (OIDC flows, password hashing, diesel store).
+# The store tests need MUXA_AUTH_TEST_DATABASE_URL and skip without it.
+test-auth:
+    cargo test -p muxa-auth --all-features
+
+# fmt-check + lint + tests + feature-gated tests. What CI should run.
+check: fmt-check lint test test-pgmq test-spa test-auth
     @echo "✔ check passed"
 
 # Build the workspace in dev mode.

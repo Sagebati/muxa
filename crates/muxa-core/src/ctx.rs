@@ -97,6 +97,7 @@ pub enum Mount {
 #[derive(Default)]
 pub struct RouterRegistry {
     routes: Vec<MountEntry>,
+    fallback: Option<axum::Router>,
     layer_fns: Vec<Box<dyn FnOnce(axum::Router) -> axum::Router + Send + 'static>>,
 }
 
@@ -126,6 +127,32 @@ impl RouterRegistry {
             router,
             mount: Mount::Manual,
         });
+    }
+
+    /// Set the app-wide fallback: the router that handles every request no
+    /// mounted route matched (a single-page app's `index.html`, a custom 404).
+    ///
+    /// It sees the full, unstripped request URI. Nested routers without a
+    /// fallback of their own fall through to it too, so `/api/nope` reaches it
+    /// when `/api` is mounted — a fallback that must not answer for such paths
+    /// has to check the prefix itself. Applied at [`compose`](Self::compose)
+    /// after every mount and before the layers, so registration order doesn't
+    /// matter and middleware wraps it like any route.
+    ///
+    /// An app has one fallback: setting it a second time is an error.
+    pub fn fallback(&mut self, router: axum::Router) -> Result<()> {
+        if self.fallback.is_some() {
+            return Err(crate::Error::other(
+                "another plugin already registered a fallback router",
+            ));
+        }
+        self.fallback = Some(router);
+        Ok(())
+    }
+
+    /// `true` once a [`fallback`](Self::fallback) is registered.
+    pub fn has_fallback(&self) -> bool {
+        self.fallback.is_some()
     }
 
     /// Register a middleware/layer that wraps the final composed router.
@@ -162,9 +189,9 @@ impl RouterRegistry {
             .collect()
     }
 
-    /// Compose all `Auto`-mounted routers, then apply middleware in
-    /// registration order (see [`layer`](Self::layer): last registered is
-    /// outermost).
+    /// Compose all `Auto`-mounted routers, then the [`fallback`](Self::fallback)
+    /// if any, then apply middleware in registration order (see
+    /// [`layer`](Self::layer): last registered is outermost).
     pub fn compose(self) -> axum::Router {
         let mut out = axum::Router::new();
         for entry in self.routes {
@@ -175,6 +202,9 @@ impl RouterRegistry {
                     out = out.nest(&entry.prefix, entry.router);
                 }
             }
+        }
+        if let Some(fallback) = self.fallback {
+            out = out.fallback_service(fallback);
         }
         for layer in self.layer_fns {
             out = layer(out);
@@ -291,6 +321,52 @@ mod tests {
 
         // The request meets the last-registered layer first.
         assert_eq!(*seen.lock().unwrap(), ["second", "first"]);
+    }
+
+    async fn body_of(router: axum::Router, uri: &str) -> String {
+        let request = http::Request::get(uri)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn fallback_catches_what_no_mount_matched() {
+        let mut registry = RouterRegistry::default();
+        // Registered before the mounts: compose applies it after them anyway.
+        registry
+            .fallback(
+                axum::Router::new()
+                    .fallback(|uri: http::Uri| async move { format!("fallback {uri}") }),
+            )
+            .unwrap();
+        registry.mount(
+            "/api",
+            axum::Router::new().route("/thing", axum::routing::get(|| async { "thing" })),
+        );
+        assert!(registry.has_fallback());
+        let router = registry.compose();
+
+        assert_eq!(body_of(router.clone(), "/api/thing").await, "thing");
+        // The nested router has no fallback of its own: the app's sees the
+        // full URI.
+        assert_eq!(
+            body_of(router.clone(), "/api/nope").await,
+            "fallback /api/nope"
+        );
+        assert_eq!(body_of(router, "/games/1").await, "fallback /games/1");
+    }
+
+    #[test]
+    fn a_second_fallback_is_an_error() {
+        let mut registry = RouterRegistry::default();
+        assert!(!registry.has_fallback());
+        registry.fallback(axum::Router::new()).unwrap();
+        assert!(registry.fallback(axum::Router::new()).is_err());
     }
 
     #[tokio::test]

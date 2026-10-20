@@ -9,6 +9,8 @@
 
 pub use muxa_core::*;
 
+#[cfg(feature = "auth")]
+pub use muxa_auth as auth;
 #[cfg(feature = "diesel")]
 pub use muxa_diesel as diesel;
 #[cfg(feature = "openapi")]
@@ -43,6 +45,11 @@ pub mod prelude {
     #[cfg(feature = "ratelimit")]
     pub use muxa_web::ratelimit::{RateLimitConfig, per_ip_layer};
 
+    #[cfg(feature = "spa")]
+    pub use muxa_web::spa::{SpaConfig, SpaPlugin};
+    #[cfg(feature = "spa")]
+    pub use muxa_web::spa_assets;
+
     #[cfg(feature = "sqlx")]
     pub use muxa_sqlx::{SqlxBackend, SqlxConfig, SqlxPlugin, SqlxPool};
 
@@ -69,6 +76,12 @@ pub mod prelude {
 
     #[cfg(feature = "openapi")]
     pub use muxa_openapi::{OpenApiConfig, OpenApiPlugin};
+
+    #[cfg(feature = "auth")]
+    pub use muxa_auth::{AuthParts, AuthPlugin, IdentityResolver, SessionUser};
+
+    #[cfg(feature = "auth-diesel")]
+    pub use muxa_auth::DieselSessionStore;
 
     // The aide-aware web plugin (finishes an `ApiRouter` + serves the spec).
     #[cfg(all(feature = "web", feature = "openapi"))]

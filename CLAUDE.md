@@ -12,10 +12,12 @@ The framework's lints and `clippy.toml` are intentionally kept **identical** to 
 
 Tasks are driven by `just` (see `justfile`):
 
-- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq`. Run this before declaring work done.
+- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa`. Run this before declaring work done.
 - `just lint` — `cargo clippy --workspace --all-targets --no-deps -- -D warnings`. Warnings are errors.
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
+- `just test-spa` — lint + test muxa-web's feature-gated `spa` module and the `spa` example.
+- `just test-auth` — muxa-auth with all features (OIDC, password, diesel store, openapi). The diesel-store tests also need `MUXA_AUTH_TEST_DATABASE_URL`; they skip without it.
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
@@ -56,6 +58,7 @@ This pattern is how you add a plugin that consumes another's resource without or
 
 `Plugin::build` also gets `&mut BuildCtx` (`muxa-core/src/ctx.rs`), the mutable channel separate from the (immutable, type-growing) state HList. Plugins use it to:
 - `ctx.router.mount(prefix, router)` / `mount_manual(...)` / `layer(...)` — contribute routes and middleware. Layers are applied in registration order, each wrapping the previous ones, so the **last** registered is outermost: middleware order follows plugin order.
+- `ctx.router.fallback(router)` — the one app-wide fallback (setting a second is an error), applied at `compose()` after every mount and before the layers. It sees the full URI, and nested routers without their own fallback fall through to it (`SpaPlugin` uses it).
 - `ctx.tasks.spawn(name, |shutdown| async {...})` — register background tasks (these *must* be `Send + 'static`; they're spawned at `run()`).
 - `ctx.telemetry` — `add_layer(...)` pushes a tracing-subscriber layer onto the one process-wide slot (one layer per type; a second app in the same process shares the slot). A plugin whose layer exports over the network calls `exclude_targets(...)` with the crates on its export path. `muxa-telemetry` knows none of its users.
 - `ctx.set_serve_fn(...)` — exactly one plugin (the web plugin) fills this slot.
@@ -95,11 +98,12 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 
 - `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors. No integrations.
 - `muxa-telemetry` — `TelemetryRegistry` (the global subscriber and its process-wide plugin-layer slot). Depends on no integration.
-- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`).
+- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.
 - `muxa-otel` / `muxa-sentry` — observability plugins (push tracing layers via `ctx.telemetry`).
+- `muxa-auth` — `AuthPlugin`: cookie sessions (tower-sessions), login state (axum-login), OAuth2/OIDC sign-in routes (oauth2/openidconnect), a cross-origin guard, password helpers, and `DieselSessionStore`. The app supplies an `AuthnBackend` (its users) and an `IdentityResolver` (provider identity → user).
 - `muxa-openapi` — aide-based OpenAPI doc + re-exports `aide`/`schemars` at the pinned versions.
 - `diesel-sentry` — framework-agnostic diesel→sentry instrumentation (no muxa dep); wrapped by `muxa-diesel`'s `sentry` feature.
 - `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal; `diesel_widgets` = diesel/Postgres JSON API with embedded migrations, emitting OTLP traces/metrics/logs to a `grafana/otel-lgtm` collector — both via docker-compose).
