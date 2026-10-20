@@ -1,0 +1,68 @@
+[package]
+name = "muxa-auth"
+description = "Cookie sessions and OAuth2 / OpenID Connect sign-in for the muxa framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+
+# Sign in with OpenID Connect providers (discovery, ID-token + nonce checks).
+# Plain OAuth2 providers need no feature.
+oidc = ["dep:openidconnect"]
+
+# Password hashing helpers: argon2 for new hashes, bcrypt accepted for imported
+# ones (with a rehash signal).
+password = ["dep:password-auth", "dep:bcrypt"]
+
+# A tower-sessions `SessionStore` over muxa-diesel's async Postgres pool.
+diesel-store = ["dep:muxa-diesel", "dep:diesel", "dep:diesel-async", "dep:async-trait"]
+
+# aide `OperationInput` for the session extractors (cookie security scheme).
+openapi = ["dep:aide"]
+
+[dependencies]
+muxa-core      = { workspace = true }
+axum           = { workspace = true }
+http           = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+secrecy        = { workspace = true }
+thiserror      = { workspace = true }
+axum-login     = { workspace = true }
+tower-sessions = { workspace = true }
+oauth2         = { workspace = true }
+reqwest        = { workspace = true }
+subtle         = { workspace = true }
+time           = { workspace = true }
+url            = { workspace = true }
+
+openidconnect  = { workspace = true, optional = true }
+password-auth  = { workspace = true, optional = true }
+bcrypt         = { workspace = true, optional = true }
+muxa-diesel    = { workspace = true, optional = true, features = ["postgres"] }
+diesel         = { workspace = true, optional = true, features = ["postgres", "time", "serde_json"] }
+diesel-async   = { workspace = true, optional = true, features = ["postgres"] }
+async-trait    = { workspace = true, optional = true }
+aide           = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower    = { workspace = true }
+wiremock = "0.6"
+toml     = { workspace = true }
+figment  = { workspace = true }
+tower-sessions = { workspace = true, features = ["memory-store"] }
+# Signing test ID tokens (HS256 with the client secret).
+hmac     = "0.12"
+sha2     = "0.10"
+base64   = "0.22"
+
+[lints]
+workspace = true
