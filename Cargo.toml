@@ -86,6 +86,9 @@ http        = "1"
 # tower_governor builds against so its middleware types unify.
 tower_governor = "0.8"
 governor = "0.10"
+# Static files embedded at compile time, served from memory; muxa-web's `spa`
+# feature. 2.x is the axum 0.8 line.
+memory-serve = "2.4"
 
 # Database
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),

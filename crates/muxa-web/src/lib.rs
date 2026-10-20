@@ -29,6 +29,8 @@
 mod banner;
 #[cfg(feature = "ratelimit")]
 pub mod ratelimit;
+#[cfg(feature = "spa")]
+pub mod spa;
 
 use std::net::SocketAddr;
 

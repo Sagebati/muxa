@@ -24,6 +24,9 @@ web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
 web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
 ratelimit           = ["dep:muxa-web", "muxa-web/ratelimit"]
+# Single-page app build served from memory as the fallback (muxa_web::spa;
+# memory-serve). The app's build.rs collects the files with memory-serve.
+spa                 = ["dep:muxa-web", "muxa-web/spa"]
 
 # SQLx Postgres pool (the default driver — produces `SqlxPool`, `SqlxPlugin`).
 sqlx                = ["dep:muxa-sqlx", "muxa-sqlx/postgres", "muxa-sqlx/tls-rustls", "muxa-pgmq?/sqlx"]
@@ -120,6 +123,10 @@ opentelemetry     = { workspace = true, features = ["metrics"] }
 [[example]]
 name = "hello"
 required-features = ["web", "sqlite", "otel"]
+
+[[example]]
+name = "spa"
+required-features = ["web", "spa"]
 
 [[example]]
 name = "diesel_widgets"

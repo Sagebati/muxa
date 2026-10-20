@@ -25,6 +25,10 @@ openapi = ["dep:aide", "dep:muxa-openapi"]
 # middleware type the layer is named with. (tokio rt+time come from the base dep.)
 ratelimit = ["dep:tower_governor", "tower_governor/axum", "dep:governor"]
 
+# Single-page app serving (`spa` module): a frontend build, collected at compile
+# time by memory-serve, served as the app's fallback.
+spa = ["dep:memory-serve"]
+
 [dependencies]
 muxa-core   = { workspace = true }
 # aide finish + OpenAPI doc; only when the `openapi` feature is on.
@@ -40,6 +44,8 @@ tower       = { workspace = true }
 # the underlying GCRA limiter (needed to name the layer's middleware type).
 tower_governor = { workspace = true, optional = true }
 governor    = { workspace = true, optional = true }
+# Embeds / serves the SPA build; only when the `spa` feature is on.
+memory-serve = { workspace = true, optional = true }
 http        = { workspace = true }
 bon         = { workspace = true }
 serde       = { workspace = true }
@@ -47,6 +53,7 @@ tracing     = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net"] }
+figment = { workspace = true }
 
 [lints]
 workspace = true

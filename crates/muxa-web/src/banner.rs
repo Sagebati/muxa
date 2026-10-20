@@ -15,21 +15,24 @@ use muxa_core::{Mount, RouterRegistry};
 /// it can't be read from there. One `String`, however many mounts.
 pub fn routes(registry: &RouterRegistry) -> String {
     let mut out = String::from("  routes (mounted)\n");
-    let prefix_width = registry
+    let fallback = registry.has_fallback().then_some((FALLBACK, "fallback"));
+    let rows: Vec<(&str, &str)> = registry
         .mounts()
-        .map(|(prefix, _)| display_prefix(prefix).len())
-        .max();
-    let Some(prefix_width) = prefix_width else {
+        .map(|(prefix, mode)| {
+            let tag = match mode {
+                Mount::Auto => "auto",
+                Mount::Manual => "manual",
+            };
+            (display_prefix(prefix), tag)
+        })
+        .chain(fallback)
+        .collect();
+    let Some(prefix_width) = rows.iter().map(|(prefix, _)| prefix.len()).max() else {
         out.push_str("    (none — only plugin-installed middleware will run)\n");
         return out;
     };
-    for (prefix, mode) in registry.mounts() {
-        let display = display_prefix(prefix);
-        let tag = match mode {
-            Mount::Auto => "auto",
-            Mount::Manual => "manual",
-        };
-        let _ = writeln!(out, "    {display:prefix_width$}  ({tag})");
+    for (prefix, tag) in rows {
+        let _ = writeln!(out, "    {prefix:prefix_width$}  ({tag})");
     }
     out
 }
@@ -48,6 +51,9 @@ pub fn print(bound: SocketAddr, routes: &str) {
     let _ = writeln!(out);
 }
 
+/// How the banner shows the app's fallback: whatever no mount matched.
+const FALLBACK: &str = "/*";
+
 fn display_prefix(prefix: &str) -> &str {
     if prefix.is_empty() { "/" } else { prefix }
 }
@@ -64,6 +70,17 @@ mod tests {
         assert_eq!(
             routes(&registry),
             "  routes (mounted)\n    /       (auto)\n    /admin  (manual)\n"
+        );
+    }
+
+    #[test]
+    fn the_fallback_is_listed_last() {
+        let mut registry = RouterRegistry::default();
+        registry.fallback(axum::Router::new()).unwrap();
+        registry.mount("/api", axum::Router::new());
+        assert_eq!(
+            routes(&registry),
+            "  routes (mounted)\n    /api  (auto)\n    /*    (fallback)\n"
         );
     }
 

@@ -43,6 +43,11 @@ pub mod prelude {
     #[cfg(feature = "ratelimit")]
     pub use muxa_web::ratelimit::{RateLimitConfig, per_ip_layer};
 
+    #[cfg(feature = "spa")]
+    pub use muxa_web::spa::{SpaConfig, SpaPlugin};
+    #[cfg(feature = "spa")]
+    pub use muxa_web::spa_assets;
+
     #[cfg(feature = "sqlx")]
     pub use muxa_sqlx::{SqlxBackend, SqlxConfig, SqlxPlugin, SqlxPool};
 
