@@ -79,8 +79,16 @@ sentry-no-tracing     = ["dep:muxa-sentry"]
 # `ApiPlugin` when `web` is enabled.
 openapi               = ["dep:muxa-openapi", "muxa-web?/openapi"]
 
-# Auth: removed for now. The project is sessionless until a non-session
-# auth story lands.
+# Auth (muxa-auth): cookie sessions, login state, OAuth2 sign-in.
+auth                  = ["dep:muxa-auth"]
+# OpenID Connect providers (Google, Microsoft, Keycloak, …).
+auth-oidc             = ["auth", "muxa-auth/oidc"]
+# Password hashing helpers (argon2; bcrypt accepted for imports).
+auth-password         = ["auth", "muxa-auth/password"]
+# Sessions in Postgres through the diesel pool (`DieselSessionStore`).
+auth-diesel           = ["auth", "diesel", "muxa-auth/diesel-store"]
+# aide docs for the session extractors; follows `openapi`.
+auth-openapi          = ["auth", "openapi", "muxa-auth/openapi"]
 
 # Convenience bundle — everything in default-typical configuration.
 full = [
@@ -97,6 +105,7 @@ muxa-pgmq   = { workspace = true, optional = true }
 muxa-otel   = { workspace = true, optional = true }
 muxa-sentry = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
+muxa-auth   = { workspace = true, optional = true }
 
 # Examples live in `examples/` and are auto-discovered by cargo (run with
 # `cargo run --example <name>`); these are the deps they pull in.

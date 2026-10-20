@@ -17,6 +17,7 @@ Tasks are driven by `just` (see `justfile`):
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
 - `just test-spa` — lint + test muxa-web's feature-gated `spa` module and the `spa` example.
+- `just test-auth` — muxa-auth with all features (OIDC, password, diesel store, openapi). The diesel-store tests also need `MUXA_AUTH_TEST_DATABASE_URL`; they skip without it.
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
@@ -102,6 +103,7 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.
 - `muxa-otel` / `muxa-sentry` — observability plugins (push tracing layers via `ctx.telemetry`).
+- `muxa-auth` — `AuthPlugin`: cookie sessions (tower-sessions), login state (axum-login), OAuth2/OIDC sign-in routes (oauth2/openidconnect), a cross-origin guard, password helpers, and `DieselSessionStore`. The app supplies an `AuthnBackend` (its users) and an `IdentityResolver` (provider identity → user).
 - `muxa-openapi` — aide-based OpenAPI doc + re-exports `aide`/`schemars` at the pinned versions.
 - `diesel-sentry` — framework-agnostic diesel→sentry instrumentation (no muxa dep); wrapped by `muxa-diesel`'s `sentry` feature.
 - `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal; `diesel_widgets` = diesel/Postgres JSON API with embedded migrations, emitting OTLP traces/metrics/logs to a `grafana/otel-lgtm` collector — both via docker-compose).
