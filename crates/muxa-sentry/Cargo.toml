@@ -25,7 +25,9 @@ tracing-bridge = [
 muxa-core      = { workspace = true }
 axum           = { workspace = true }
 sentry         = { workspace = true }
-sentry-tower   = { workspace = true }
+# `axum-matched-path`: name HTTP transactions after the route template
+# (`GET /jobs/{id}`), not the raw path, so Sentry groups them per endpoint.
+sentry-tower   = { workspace = true, features = ["axum-matched-path"] }
 sentry-tracing = { workspace = true, optional = true }
 tracing        = { workspace = true }
 bon            = { workspace = true }

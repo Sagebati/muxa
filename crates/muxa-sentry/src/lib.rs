@@ -7,7 +7,8 @@
 //!    events flush on shutdown.
 //! 2. Install `sentry-tower` middleware (per-request scope + HTTP context
 //!    capture + optional transactions for performance monitoring) on the
-//!    router.
+//!    router. Transactions are named after the matched route template
+//!    (`GET /jobs/{id}`), so Sentry groups them per endpoint.
 //! 3. **With the `tracing-bridge` feature**: push `sentry-tracing::layer()`
 //!    onto the shared tracing subscriber so `tracing` events and
 //!    spans flow into Sentry as breadcrumbs / events / transactions.
@@ -35,6 +36,8 @@
 #![warn(missing_docs)]
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use bon::Builder;
 use muxa_core::{BuildCtx, EnvFallback, Error, Plugin, Result, RunMode, State};
@@ -76,6 +79,16 @@ pub struct SentryConfig {
     /// samples everything (full local visibility). Set it explicitly — including
     /// `0.0` — to override.
     pub traces_sample_rate: Option<f32>,
+    /// Per-transaction overrides of [`traces_sample_rate`](Self::traces_sample_rate),
+    /// keyed by the exact transaction name — `"GET /healthz"` (method + route
+    /// template) for a request, the span name for a `tracing` root span. `0.0`
+    /// drops a noisy transaction (a probe, a polled endpoint) entirely.
+    ///
+    /// A transaction continuing an incoming trace keeps its parent's sampling
+    /// decision either way, so a distributed trace is never cut in half. Muxa's
+    /// own `muxa.task` (a background task's lifetime span) defaults to `0.0`.
+    #[builder(default)]
+    pub transaction_sample_rates: HashMap<String, f32>,
     /// Attach stack traces to every captured event.
     #[builder(default = true)]
     pub attach_stacktrace: bool,
@@ -107,6 +120,7 @@ impl Default for SentryConfig {
             environment: None,
             release: None,
             traces_sample_rate: None,
+            transaction_sample_rates: HashMap::new(),
             attach_stacktrace: true,
             send_default_pii: false,
             http_transactions: true,
@@ -126,6 +140,30 @@ pub fn default_traces_sample_rate(mode: RunMode) -> f32 {
         RunMode::Production => 0.1,
         RunMode::Development => 1.0,
     }
+}
+
+/// Transactions sampled at a fixed rate unless
+/// [`SentryConfig::transaction_sample_rates`] says otherwise.
+///
+/// `muxa.task` is the span each background task runs in: it lives as long as
+/// the app, so as a transaction it would reach Sentry only at shutdown, cut at
+/// the SDK's 1000-span cap. Work in a task that should be traced starts a trace
+/// of its own (a fresh hub with no active span).
+const DEFAULT_TRANSACTION_SAMPLE_RATES: &[(&str, f32)] = &[("muxa.task", 0.0)];
+
+/// The sample rate for one transaction: the parent's decision when it continues
+/// an incoming trace, else its [`SentryConfig::transaction_sample_rates`] entry,
+/// else `default_rate`.
+fn sample_rate_for(
+    rates: &HashMap<String, f32>,
+    default_rate: f32,
+    name: &str,
+    parent_sampled: Option<bool>,
+) -> f32 {
+    parent_sampled.map_or_else(
+        || rates.get(name).copied().unwrap_or(default_rate),
+        f32::from,
+    )
 }
 
 /// Plugin output handle.
@@ -200,11 +238,24 @@ impl<S: State> Plugin<S> for SentryPlugin {
         // INFO/WARN→Log and ERROR→Event|Log once that feature is active.
         let enable_logs = cfg.logs && cfg!(feature = "tracing-bridge");
 
+        // Per-transaction rates: the built-in defaults, then the app's overrides.
+        let overrides = cfg.transaction_sample_rates.len();
+        let mut rates: HashMap<String, f32> = DEFAULT_TRANSACTION_SAMPLE_RATES
+            .iter()
+            .map(|&(name, rate)| (name.to_owned(), rate))
+            .collect();
+        rates.extend(cfg.transaction_sample_rates);
+        let traces_sampler: Arc<sentry::TracesSampler> =
+            Arc::new(move |tx: &sentry::TransactionContext| {
+                sample_rate_for(&rates, traces_sample_rate, tx.name(), tx.sampled())
+            });
+
         let options = sentry::ClientOptions {
             dsn,
             environment: Some(environment),
             release: cfg.release.map(Cow::Owned),
             traces_sample_rate,
+            traces_sampler: Some(traces_sampler),
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
             enable_logs,
@@ -251,6 +302,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
                 env = options.environment.as_deref().unwrap_or("-"),
                 release = options.release.as_deref().unwrap_or("-"),
                 traces_sample_rate,
+                transaction_rate_overrides = overrides,
                 logs = enable_logs,
                 "muxa-sentry: initialized"
             );
@@ -268,7 +320,38 @@ mod tests {
     use figment::providers::{Format as _, Toml};
     use muxa_core::App;
 
-    use super::{SentryConfig, SentryPlugin};
+    use std::collections::HashMap;
+
+    use super::{SentryConfig, SentryPlugin, sample_rate_for};
+
+    /// A named transaction takes its override, any other the default rate, and
+    /// one continuing a trace its parent's decision — even over an override.
+    #[test]
+    fn sample_rate_prefers_parent_then_override_then_default() {
+        let rates = HashMap::from([("GET /healthz".to_owned(), 0.0)]);
+        assert_eq!(sample_rate_for(&rates, 0.5, "GET /healthz", None), 0.0);
+        assert_eq!(sample_rate_for(&rates, 0.5, "GET /jobs/{id}", None), 0.5);
+        assert_eq!(
+            sample_rate_for(&rates, 0.5, "GET /healthz", Some(true)),
+            1.0
+        );
+        assert_eq!(
+            sample_rate_for(&rates, 0.5, "GET /jobs/{id}", Some(false)),
+            0.0
+        );
+    }
+
+    /// The overrides read from a `[sentry.transaction_sample_rates]` table, whose
+    /// keys (`METHOD /route`) need TOML's quoted form.
+    #[test]
+    fn transaction_sample_rates_read_from_toml() {
+        let config = Toml::string(
+            "[sentry]\ntraces_sample_rate = 1.0\n\n[sentry.transaction_sample_rates]\n\"GET /healthz\" = 0.0\n",
+        );
+        let cfg: SentryConfig = Figment::from(config).extract_inner("sentry").unwrap();
+        assert_eq!(cfg.transaction_sample_rates.get("GET /healthz"), Some(&0.0));
+        assert_eq!(cfg.traces_sample_rate, Some(1.0));
+    }
 
     /// `#[serde(default)]` fills omitted fields from `Default` — which must be
     /// the hand-written impl, not a derived all-`false`. Regression guard: an
@@ -282,6 +365,7 @@ mod tests {
         assert!(cfg.logs, "logs must default true");
         assert!(!cfg.send_default_pii, "send_default_pii must default false");
         assert!(cfg.traces_sample_rate.is_none(), "sample rate stays unset");
+        assert!(cfg.transaction_sample_rates.is_empty(), "no rate overrides");
     }
 
     /// An explicit `false` from config must still win over the default.
