@@ -79,6 +79,7 @@ muxa::app!()
 
 - All pending migrations run in one transaction: either all apply or none do. A migration that cannot run in a transaction, such as `CREATE INDEX CONCURRENTLY`, is incompatible with this mode.
 - They run on a dedicated connection, not one from the pool.
+- Concurrent runs are serialized, so several replicas can start at once. The first statement of the migration transaction is `SELECT pg_advisory_xact_lock(key)`: the other replicas wait on it, then find nothing pending and start normally. The lock is released at commit or rollback, including when a process dies mid-migration. The key defaults to `MigrationsRunner::DEFAULT_LOCK_KEY`, the same for every muxa app. Two apps that share a database but keep separate migration sets can pick their own with `MigrationsRunner::new(MIGRATIONS).with_lock_key(key)` so they don't wait on each other.
 - `embed_migrations!` expands to `diesel_migrations::` paths, so your crate needs `diesel_migrations = "2"` as a direct dependency.
 - `MigrationsRunner::new(MIGRATIONS).run(url).await` runs them without the plugin and returns how many were applied.
 

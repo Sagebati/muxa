@@ -76,7 +76,9 @@ impl Default for DieselConfig {
 /// [`MigrationsRunner`](crate::MigrationsRunner) via
 /// [`with_migrations`](Self::with_migrations): all pending migrations are
 /// applied (in one transaction) at startup, *before* the pool is published, so
-/// later plugins and handlers observe the migrated schema.
+/// later plugins and handlers observe the migrated schema. Replicas starting at
+/// once are serialized by an advisory lock (see
+/// [`MigrationsRunner`](crate::MigrationsRunner#concurrent-runs)).
 ///
 /// ```ignore
 /// use muxa::diesel::{embed_migrations, EmbeddedMigrations, DieselPlugin, MigrationsRunner};
