@@ -12,12 +12,13 @@ The framework's lints and `clippy.toml` are intentionally kept **identical** to 
 
 Tasks are driven by `just` (see `justfile`):
 
-- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa`. Run this before declaring work done.
+- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa` + `test-auth` + `test-diesel`. Run this before declaring work done.
 - `just lint` — `cargo clippy --workspace --all-targets --no-deps -- -D warnings`. Warnings are errors.
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
 - `just test-spa` — lint + test muxa-web's feature-gated `spa` module and the `spa` example.
 - `just test-auth` — muxa-auth with all features (OIDC, password, diesel store, openapi). The diesel-store tests also need `MUXA_AUTH_TEST_DATABASE_URL`; they skip without it.
+- `just test-diesel` — muxa-diesel's `MigrationsRunner` (with `migrations`). The concurrency tests need `MUXA_DIESEL_TEST_DATABASE_URL` (a role that can create databases); they skip without it.
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
