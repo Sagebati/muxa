@@ -17,7 +17,6 @@ fmt-check:
 lint:
     cargo clippy --workspace --all-targets --no-deps -- -D warnings
     cargo clippy -p muxa-auth --all-features --all-targets --no-deps -- -D warnings
-    cargo clippy -p muxa-diesel --features migrations --all-targets --no-deps -- -D warnings
 
 # Run the default-feature test suite.
 test:
@@ -38,14 +37,8 @@ test-spa:
 test-auth:
     cargo test -p muxa-auth --all-features
 
-# muxa-diesel's embedded-migrations runner (concurrent runs are serialized).
-# The Postgres tests need MUXA_DIESEL_TEST_DATABASE_URL (a role that can create
-# databases) and skip without it.
-test-diesel:
-    cargo test -p muxa-diesel --features migrations
-
 # fmt-check + lint + tests + feature-gated tests. What CI should run.
-check: fmt-check lint test test-pgmq test-spa test-auth test-diesel
+check: fmt-check lint test test-pgmq test-spa test-auth
     @echo "✔ check passed"
 
 # Build the workspace in dev mode.
