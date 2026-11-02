@@ -12,13 +12,14 @@ The framework's lints and `clippy.toml` are intentionally kept **identical** to 
 
 Tasks are driven by `just` (see `justfile`):
 
-- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa`. Run this before declaring work done.
+- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa` + `test-auth` + `check-standalone`. Run this before declaring work done.
 - `just lint` — `cargo clippy --workspace --all-targets --no-deps -- -D warnings`. Warnings are errors.
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
 - `just test-spa` — lint + test muxa-web's feature-gated `spa` module and the `spa` example.
 - `just test-auth` — muxa-auth with all features (OIDC, password, diesel store, openapi). The diesel-store tests also need `MUXA_AUTH_TEST_DATABASE_URL`; they skip without it.
-- `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
+- `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async,bundled-libpq --tests`. These are not covered by `just test` and must be run separately. (`bundled-libpq` so it links without a system libpq.)
+- `just check-standalone` — asserts the diesel/auth builds don't pull `pq-sys`/`mysqlclient-sys` (libpq/libmysqlclient), so binaries ship standalone.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
 - `just doc` — build + open workspace docs.
@@ -91,14 +92,16 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 
 - The `muxa` facade (`crates/muxa/Cargo.toml`) gates every integration behind a top-level feature and forwards the integration's own features. It uses `dep:` to gate optional deps and `muxa-pgmq?/sqlx`-style optional-activation so enabling a sub-feature without its parent is a no-op rather than a build error. `default = ["web", "otel"]`; `full` is the everything bundle.
 - Internal `workspace.dependencies` use `default-features = false` so the facade controls which features cascade.
+- **Standalone binaries**: nothing in the default graph links a C client library. Enable diesel's `postgres_backend`/`mysql_backend`, never `postgres`/`mysql` — those link libpq/libmysqlclient for diesel's sync connections, which diesel-async (tokio-postgres / mysql_async) never uses. The one leak is pgmq's `diesel` feature (it enables `diesel/postgres`); `muxa-pgmq/bundled-libpq` (facade: `pgmq-bundled-libpq`) links a static, TLS-less libpq for it instead. TLS is rustls throughout except the opt-in `sqlx-tls-native`.
+- **Host-sized defaults**: a tunable that depends on the machine defaults from `muxa_core::host` (`cpus()`, `db_pool_size()`) or the kernel (`[web] backlog` = `somaxconn`), never a fixed constant. Explicit config always wins. Document the default as the rule ("4 per CPU, 4–32"), not a number.
 - Several third-party pins are deliberate and load-bearing — read the comments in the root `Cargo.toml` before bumping: `pgmq` is a pinned git rev of the Sagebati fork's `install-only` branch (upstream `main` plus a diesel-async SQL installer; tracks sqlx 0.9 / diesel-async 0.9); `aide` is exact-pinned (`=0.16.0-alpha.4`) so the `OpenApi` type unifies across crates; `diesel-async`/`diesel_migrations` track diesel 2.x. diesel-async is Postgres/MySQL only (no SQLite). pgmq is Postgres-only (no SQLite backend).
 - App code conventionally does `use muxa::prelude::*;`, which brings in `App`, the `Plugin` trait, capability traits, and one canonical plugin per enabled feature.
 
 ## Crate map
 
-- `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors. No integrations.
+- `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors, `host` (CPUs the process may use, cgroup-aware, and the DB pool-size heuristic). No integrations.
 - `muxa-telemetry` — `TelemetryRegistry` (the global subscriber and its process-wide plugin-layer slot). Depends on no integration.
-- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
+- `muxa-web` — `WebPlugin` (serve loop + shutdown; HTTP/1.1 + cleartext HTTP/2 via the default `http2` feature), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.

@@ -16,4 +16,5 @@ service_name = "hello"
 # (and `create_if_missing = true`) for a persistent file.
 url = "sqlite::memory:"
 create_if_missing = true
+# Pinned for the demo; omit it to size the pool from the host's CPUs.
 max_connections = 5

@@ -11,10 +11,18 @@ repository.workspace = true
 [features]
 # Defaults install ctrl-c handling for graceful shutdown. Turn off if you
 # manage your own signal handling and just want the bind/serve loop.
-default = ["graceful-shutdown"]
+default = ["graceful-shutdown", "http2"]
 
 # `tokio::signal::ctrl_c` bridge into the shutdown token.
 graceful-shutdown = ["tokio/signal"]
+
+# Serve HTTP/2 as well as HTTP/1.1 on the same port, told apart per connection.
+# muxa terminates no TLS, so this is cleartext HTTP/2 ("h2c", prior knowledge):
+# what a reverse proxy or load balancer speaks to the app when configured for
+# HTTP/2 end to end (Cloud Run, Envoy, …), and what gRPC needs. Also lets
+# WebSockets run over HTTP/2 (RFC 8441 extended CONNECT). Browsers only use
+# HTTP/2 over TLS, which the proxy in front handles.
+http2 = ["axum/http2"]
 
 # Aide-aware web plugin (`ApiPlugin`): finishes an `aide::axum::ApiRouter` into
 # routes + an OpenAPI document and serves the spec/docs via muxa-openapi.
@@ -35,7 +43,8 @@ muxa-core   = { workspace = true }
 aide         = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
 # Pull `tokio` without `signal` by default; the feature adds it back.
-tokio       = { workspace = true }
+# `net` for `TcpSocket` (the listener is bound with a tunable backlog).
+tokio       = { workspace = true, features = ["net"] }
 tokio-util  = { workspace = true }
 futures     = { workspace = true }
 axum        = { workspace = true }
@@ -54,6 +63,10 @@ tracing     = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net"] }
 figment = { workspace = true }
+# A real HTTP/1.1 and HTTP/2 client for the serve-loop tests.
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 
 [lints]
 workspace = true

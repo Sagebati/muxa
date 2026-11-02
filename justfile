@@ -23,8 +23,16 @@ test:
     cargo test --workspace
 
 # Run the muxa-pgmq capability composition tests with both backends.
+# `bundled-libpq` so the diesel backend links without a system libpq.
 test-pgmq:
-    cargo test -p muxa-pgmq --features sqlx,diesel-async --tests
+    cargo test -p muxa-pgmq --features sqlx,diesel-async,bundled-libpq --tests
+
+# Assert the diesel builds don't link the C client libraries (libpq,
+# libmysqlclient) — i.e. a binary using them can ship standalone.
+check-standalone:
+    ! cargo tree -p muxa --features diesel-migrations,diesel-sentry -e normal,build -i pq-sys 2>/dev/null | grep -q pq-sys
+    ! cargo tree -p muxa --features diesel-mysql -e normal,build -i mysqlclient-sys 2>/dev/null | grep -q mysqlclient-sys
+    ! cargo tree -p muxa-auth --all-features -e normal,build -i pq-sys 2>/dev/null | grep -q pq-sys
 
 # Lint + test the SPA serving (muxa-web's `spa` feature, off by default) and its
 # example.
@@ -38,7 +46,7 @@ test-auth:
     cargo test -p muxa-auth --all-features
 
 # fmt-check + lint + tests + feature-gated tests. What CI should run.
-check: fmt-check lint test test-pgmq test-spa test-auth
+check: fmt-check lint test test-pgmq test-spa test-auth check-standalone
     @echo "✔ check passed"
 
 # Build the workspace in dev mode.

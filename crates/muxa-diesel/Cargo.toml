@@ -13,9 +13,17 @@ repository.workspace = true
 default = ["postgres"]
 
 # Native-async Postgres pool via `diesel-async`.
-postgres = ["diesel-async/postgres", "diesel/postgres"]
+#
+# Only diesel's `*_backend` features: diesel-async speaks the wire protocol
+# itself (tokio-postgres / mysql_async), so diesel's `postgres` / `mysql`
+# features — which link the C client libraries libpq (`pq-sys`) and
+# libmysqlclient (`mysqlclient-sys`) for diesel's *sync* connections — are
+# never needed here. Leaving them off keeps the binary free of those dynamic
+# system libraries, so it builds and runs as a standalone executable
+# (including a fully static musl build).
+postgres = ["diesel-async/postgres", "diesel/postgres_backend"]
 # Native-async MySQL pool via `diesel-async`.
-mysql    = ["diesel-async/mysql",    "diesel/mysql"]
+mysql    = ["diesel-async/mysql",    "diesel/mysql_backend"]
 # Note: SQLite is intentionally unsupported. `diesel-async` has no SQLite
 # backend, and muxa-diesel deliberately doesn't fall back to sync diesel on
 # a blocking pool. For async SQLite use `muxa-sqlx` with its `sqlite`
@@ -44,6 +52,7 @@ muxa-core    = { workspace = true }
 dupe         = { workspace = true }
 diesel       = { workspace = true }
 diesel-async = { workspace = true }
+deadpool     = { workspace = true }
 diesel_migrations = { workspace = true, optional = true }
 diesel-sentry = { workspace = true, optional = true }
 # `spawn_blocking` for running the (sync) migration harness off the executor.

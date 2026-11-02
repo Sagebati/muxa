@@ -25,12 +25,21 @@ sqlx          = ["pgmq/sqlx", "pgmq/queue-experimental", "dep:muxa-sqlx", "muxa-
 # pulls in `diesel-async/postgres`) regardless of the consumer's setup.
 diesel-async  = ["pgmq/diesel-async", "pgmq/queue-experimental", "dep:muxa-diesel", "muxa-diesel/postgres", "dep:diesel-async", "diesel-async/postgres"]
 
+# Link a static, bundled libpq instead of the system one, so a binary using the
+# diesel-async backend runs standalone (no libpq.so on the target). Only
+# meaningful with `diesel-async`: pgmq's diesel support enables
+# `diesel/postgres`, which links libpq even though the async path never calls
+# it (queries go over tokio-postgres). Built without OpenSSL for that reason —
+# connection TLS is diesel-async's business, not libpq's. Needs a C compiler.
+bundled-libpq = ["dep:pq-sys", "pq-sys/bundled_without_openssl"]
+
 [dependencies]
 muxa-core    = { workspace = true }
 muxa-sqlx    = { workspace = true, optional = true }
 muxa-diesel  = { workspace = true, optional = true }
 sqlx         = { workspace = true, optional = true }
 diesel-async = { workspace = true, optional = true }
+pq-sys       = { workspace = true, optional = true }
 pgmq         = { workspace = true, features = ["install-sql-embedded"] }
 bon          = { workspace = true }
 serde        = { workspace = true }

@@ -36,8 +36,16 @@ fn default_url() -> String {
     "sqlite::memory:".into()
 }
 
+/// One connection per CPU the process may use, between 2 and 8. SQLite has a
+/// single writer, so extra connections only add parallel readers, and each
+/// runs its queries on its own worker thread: past one per CPU they contend
+/// rather than help.
 fn default_max_connections() -> u32 {
-    5
+    sqlite_pool_size_for(muxa_core::host::cpus())
+}
+
+fn sqlite_pool_size_for(cpus: usize) -> u32 {
+    u32::try_from(cpus).unwrap_or(u32::MAX).clamp(2, 8)
 }
 
 fn default_create_if_missing() -> bool {
@@ -59,7 +67,8 @@ pub struct SqliteConfig {
     /// for `:memory:` URLs).
     #[builder(default = default_create_if_missing())]
     pub create_if_missing: bool,
-    /// Maximum number of pool connections.
+    /// Maximum number of pool connections. Defaults to one per CPU the
+    /// process may use ([`muxa_core::host::cpus`]), between 2 and 8.
     #[builder(default = default_max_connections())]
     pub max_connections: u32,
 }
@@ -102,5 +111,21 @@ impl<S: State> Plugin<S> for SqlitePlugin {
 
         tracing::info!("muxa-sqlx[sqlite]: connected");
         Ok(SqlitePool(pool))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pool_size_is_one_per_cpu_within_bounds() {
+        assert_eq!(sqlite_pool_size_for(1), 2);
+        assert_eq!(sqlite_pool_size_for(4), 4);
+        assert_eq!(sqlite_pool_size_for(64), 8);
+        assert_eq!(
+            SqliteConfig::default().max_connections,
+            sqlite_pool_size_for(muxa_core::host::cpus())
+        );
     }
 }

@@ -44,7 +44,7 @@ impl PgBackend for SqlxBackend {
 // muxa-core — adding `impl PgBackend for SqlxBackend` is all that's needed.
 
 fn default_max_connections() -> u32 {
-    10
+    muxa_core::host::db_pool_size()
 }
 
 fn default_min_connections() -> u32 {
@@ -60,7 +60,9 @@ pub struct SqlxConfig {
     /// [`SecretString`] so it's redacted in `Debug`/logs and never copied around
     /// in the clear; the value is exposed only when connecting.
     pub url: SecretString,
-    /// Maximum number of pool connections. Defaults to 10.
+    /// Maximum number of pool connections. Defaults to
+    /// [`muxa_core::host::db_pool_size`]: four per CPU the process may use,
+    /// between 4 and 32.
     #[builder(default = default_max_connections())]
     pub max_connections: u32,
     /// Minimum number of pool connections. Defaults to 0.

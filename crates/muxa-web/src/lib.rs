@@ -34,12 +34,16 @@ pub mod spa;
 
 use std::net::SocketAddr;
 
+use std::io;
+
 use axum::Router;
+use axum::serve::ListenerExt as _;
 use bon::Builder;
 #[cfg(feature = "openapi")]
 use muxa_core::Sections;
 use muxa_core::{BoxFuture, BuildCtx, EnvFallback, Plugin, Result, ServeFn, ShutdownToken, State};
 use serde::Deserialize;
+use tokio::net::{TcpListener, TcpSocket};
 
 /// Default bind host.
 fn default_host() -> String {
@@ -71,10 +75,43 @@ pub struct WebConfig {
     #[serde(default = "default_true")]
     #[builder(default = true)]
     pub banner: bool,
+    /// Listen backlog: connections the kernel queues for `accept` before it
+    /// starts refusing them. Unset, it's the host's ceiling — on Linux
+    /// `net.core.somaxconn` (4096 on current kernels), 1024 elsewhere — so a
+    /// burst is absorbed rather than reset. (Larger values are clamped to
+    /// that ceiling by the kernel.)
+    pub backlog: Option<u32>,
+    /// Set `TCP_NODELAY` on accepted connections, so small responses go out
+    /// immediately instead of waiting on Nagle's algorithm. Defaults to
+    /// `true`.
+    #[serde(default = "default_true")]
+    #[builder(default = true)]
+    pub tcp_nodelay: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+/// The listen backlog when `[web] backlog` is unset: the host's ceiling.
+fn default_backlog() -> u32 {
+    host_backlog_ceiling().unwrap_or(1024)
+}
+
+/// `net.core.somaxconn`, the kernel's cap on any socket's backlog (per network
+/// namespace, so a container reads its own).
+#[cfg(target_os = "linux")]
+fn host_backlog_ceiling() -> Option<u32> {
+    std::fs::read_to_string("/proc/sys/net/core/somaxconn")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn host_backlog_ceiling() -> Option<u32> {
+    None
 }
 
 impl Default for WebConfig {
@@ -83,6 +120,8 @@ impl Default for WebConfig {
             host: default_host(),
             port: default_port(),
             banner: true,
+            backlog: None,
+            tcp_nodelay: true,
         }
     }
 }
@@ -237,16 +276,21 @@ async fn serve_loop(
     banner_routes: Option<String>,
     shutdown: ShutdownToken,
 ) -> Result<()> {
-    // `(host, port)` goes through `ToSocketAddrs`: an IP literal is parsed
-    // without a lookup, a hostname is resolved.
-    let listener = tokio::net::TcpListener::bind((bind_host(&cfg.host), cfg.port)).await?;
+    let backlog = cfg.backlog.unwrap_or_else(default_backlog);
+    let listener = bind(&cfg.host, cfg.port, backlog).await?;
     let bound = listener.local_addr()?;
 
     if let Some(routes) = banner_routes {
         banner::print(bound, &routes);
     }
 
-    tracing::info!(%bound, "muxa-web: serving");
+    tracing::info!(
+        %bound,
+        backlog,
+        tcp_nodelay = cfg.tcp_nodelay,
+        http2 = cfg!(feature = "http2"),
+        "muxa-web: serving"
+    );
 
     // Bridge ctrl_c to the shutdown token (additive — anyone else can also
     // cancel it). Only compiled with the `graceful-shutdown` feature, which
@@ -262,7 +306,26 @@ async fn serve_loop(
         });
     }
 
-    let graceful = shutdown.clone();
+    serve(listener, router, cfg.tcp_nodelay, shutdown).await?;
+
+    tracing::info!("muxa-web: serve loop ended");
+    Ok(())
+}
+
+/// Accept and serve connections on `listener` until `shutdown` is cancelled,
+/// then drain the in-flight ones. Each connection speaks HTTP/1.1, or HTTP/2
+/// with the `http2` feature: hyper tells them apart from the first bytes.
+async fn serve(
+    listener: TcpListener,
+    router: Router,
+    tcp_nodelay: bool,
+    shutdown: ShutdownToken,
+) -> io::Result<()> {
+    let listener = listener.tap_io(move |tcp| {
+        if tcp_nodelay && let Err(err) = tcp.set_nodelay(true) {
+            tracing::trace!(%err, "muxa-web: failed to set TCP_NODELAY");
+        }
+    });
     // Serve with per-connection `ConnectInfo<SocketAddr>` so handlers and tower
     // layers (e.g. the per-IP rate limiter) can read the client's peer address.
     // Additive and cheap — handlers that don't need it are unaffected.
@@ -270,11 +333,41 @@ async fn serve_loop(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move { graceful.cancelled().await })
-    .await?;
+    .with_graceful_shutdown(async move { shutdown.cancelled().await })
+    .await
+}
 
-    tracing::info!("muxa-web: serve loop ended");
-    Ok(())
+/// Listen on `(host, port)` with `backlog`, trying each address `host` resolves
+/// to in turn (an IP literal is parsed without a lookup), like
+/// `TcpListener::bind` — which has no backlog knob (it's fixed at 1024).
+async fn bind(host: &str, port: u16, backlog: u32) -> io::Result<TcpListener> {
+    let mut last_err = None;
+    for addr in tokio::net::lookup_host((bind_host(host), port)).await? {
+        match listen_on(addr, backlog) {
+            Ok(listener) => return Ok(listener),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("`{host}` resolved to no address"),
+        )
+    }))
+}
+
+fn listen_on(addr: SocketAddr, backlog: u32) -> io::Result<TcpListener> {
+    let socket = if addr.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    // As std's `bind` does on Unix: rebind right after a restart, while the
+    // previous process's connections sit in TIME_WAIT.
+    #[cfg(unix)]
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    socket.listen(backlog)
 }
 
 /// `host` without the brackets of a URL-style IPv6 literal (`[::1]` → `::1`),
@@ -294,6 +387,16 @@ mod tests {
         let config = WebConfig::default();
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 3000);
+        assert_eq!(config.backlog, None);
+        assert!(config.tcp_nodelay);
+    }
+
+    #[test]
+    fn default_backlog_is_the_host_ceiling() {
+        let backlog = default_backlog();
+        assert!(backlog > 0);
+        #[cfg(target_os = "linux")]
+        assert_eq!(Some(backlog), host_backlog_ceiling());
     }
 
     #[test]
@@ -319,9 +422,84 @@ mod tests {
     /// now do too.
     #[tokio::test]
     async fn binds_ip_literals_and_hostnames() {
-        for host in ["127.0.0.1", "localhost"] {
-            let listener = tokio::net::TcpListener::bind((bind_host(host), 0)).await;
+        for host in ["127.0.0.1", "localhost", "[::1]"] {
+            let listener = bind(host, 0, 128).await;
+            // `[::1]` fails only where IPv6 is off, which a resolve error
+            // can't be confused with.
+            if host == "[::1]" && listener.is_err() {
+                continue;
+            }
             assert!(listener.is_ok(), "{host}: {listener:?}");
         }
+    }
+
+    /// Serve a one-route app on an ephemeral port; returns its address.
+    async fn spawn_app(shutdown: ShutdownToken) -> SocketAddr {
+        let listener = bind("127.0.0.1", 0, 128).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = Router::new().route("/", axum::routing::get(|| async { "hi" }));
+        tokio::spawn(serve(listener, router, true, shutdown));
+        addr
+    }
+
+    /// GET `/` over a fresh connection; returns the response's HTTP version
+    /// and body.
+    async fn get(addr: SocketAddr, http2: bool) -> (http::Version, String) {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper::body::Bytes;
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let io = TokioIo::new(tokio::net::TcpStream::connect(addr).await.unwrap());
+        let req = http::Request::get(format!("http://{addr}/"))
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let res = if http2 {
+            let (mut sender, conn) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+                    .await
+                    .unwrap();
+            tokio::spawn(conn);
+            sender.send_request(req).await.unwrap()
+        } else {
+            let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+            tokio::spawn(conn);
+            sender.send_request(req).await.unwrap()
+        };
+        let version = res.version();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        (version, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn serves_http1() {
+        let shutdown = ShutdownToken::new();
+        let addr = spawn_app(shutdown.clone()).await;
+        assert_eq!(
+            get(addr, false).await,
+            (http::Version::HTTP_11, "hi".to_owned())
+        );
+        shutdown.cancel();
+    }
+
+    /// Cleartext HTTP/2 with prior knowledge, on the same port as HTTP/1.1.
+    #[cfg(feature = "http2")]
+    #[tokio::test]
+    async fn serves_http2_on_the_same_port() {
+        let shutdown = ShutdownToken::new();
+        let addr = spawn_app(shutdown.clone()).await;
+        assert_eq!(
+            get(addr, true).await,
+            (http::Version::HTTP_2, "hi".to_owned())
+        );
+        assert_eq!(
+            get(addr, false).await,
+            (http::Version::HTTP_11, "hi".to_owned())
+        );
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn unresolvable_host_is_an_error() {
+        assert!(bind("no-such-host.invalid", 0, 128).await.is_err());
     }
 }

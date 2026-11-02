@@ -63,7 +63,7 @@ The plugin model itself (the `Plugin` trait, the state list, `BuildCtx`) is docu
 
 | Feature | Enables |
 |---|---|
-| `web` *(default)* | `WebPlugin`: axum serve loop with ctrl-c graceful shutdown ([`muxa-web`](../muxa-web)) |
+| `web` *(default)* | `WebPlugin`: axum serve loop, HTTP/1.1 and cleartext HTTP/2, with ctrl-c graceful shutdown ([`muxa-web`](../muxa-web)) |
 | `web-no-signal` | in place of `web`: the same without the ctrl-c handler |
 | `ratelimit` | per-IP rate-limit layer: `RateLimitConfig`, `per_ip_layer` |
 | `otel` *(default)* | `OtelPlugin`, with the tower-http `TraceLayer` ([`muxa-otel`](../muxa-otel)) |

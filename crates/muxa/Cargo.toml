@@ -19,9 +19,10 @@ default = ["web", "otel"]
 # a build error.
 # ---------------------------------------------------------------------------
 
-# Web (axum serve loop + graceful shutdown).
-web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
-web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
+# Web (axum serve loop + graceful shutdown), HTTP/1.1 and cleartext HTTP/2 on
+# the same port (muxa-web's `http2`).
+web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown", "muxa-web/http2"]
+web-no-signal       = ["dep:muxa-web", "muxa-web/http2"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
 ratelimit           = ["dep:muxa-web", "muxa-web/ratelimit"]
 # Single-page app build served from memory as the fallback (muxa_web::spa;
@@ -59,6 +60,10 @@ diesel-network      = ["muxa-diesel?/network"]
 
 # PGMQ.
 pgmq                = ["dep:muxa-pgmq"]
+# Statically link a bundled libpq for pgmq's diesel backend (`pgmq` + `diesel`),
+# which otherwise links the system libpq. Lets that combination build a
+# standalone binary. No-op without `pgmq`.
+pgmq-bundled-libpq  = ["muxa-pgmq?/bundled-libpq"]
 
 # OpenTelemetry / observability. `otel` carries muxa-otel's own default
 # (`http-layer`: the tower-http TraceLayer), as `web` does for graceful-shutdown.
@@ -116,8 +121,9 @@ axum  = { workspace = true }
 serde = { workspace = true }
 # `diesel_widgets` example: schema/derives + async query execution. The
 # `embed_migrations!` macro expands to absolute `diesel_migrations::` paths,
-# so that crate must be in scope at the call site.
-diesel            = { workspace = true, features = ["postgres"] }
+# so that crate must be in scope at the call site. `postgres_backend` (not
+# `postgres`) so the example doesn't link libpq.
+diesel            = { workspace = true, features = ["postgres_backend"] }
 diesel-async      = { workspace = true, features = ["postgres", "deadpool"] }
 diesel_migrations = { workspace = true }
 # `diesel_widgets` also emits its own span (tracing) + a request counter

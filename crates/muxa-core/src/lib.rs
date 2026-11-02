@@ -28,6 +28,7 @@ pub mod capability;
 pub mod config;
 pub mod ctx;
 pub mod error;
+pub mod host;
 pub mod mode;
 pub mod plugin;
 pub mod state;

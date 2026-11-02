@@ -59,6 +59,8 @@ The `&_` in form 3 is required. `WebPlugin::new(move |_state| router)` does not 
 | `host` | `"0.0.0.0"` | bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, `"[::1]"`) or a hostname such as `"localhost"`. In an env var write IPv6 bare (`<APP>_WEB__HOST=::1`): figment reads an unquoted `[::1]` as a list |
 | `port` | `3000` | `0` lets the OS pick |
 | `banner` | `true` | print the launch banner to stderr |
+| `backlog` | the host's ceiling | listen backlog: `net.core.somaxconn` on Linux, `1024` elsewhere |
+| `tcp_nodelay` | `true` | set `TCP_NODELAY` on accepted connections |
 
 The banner shows the bound URL and the mounted route prefixes. It does not print configuration.
 
@@ -67,6 +69,10 @@ The banner shows the bound URL and the mounted route prefixes. It does not print
 With the `graceful-shutdown` feature (default), ctrl-c cancels the app's `ShutdownToken`. The server stops accepting connections and background tasks see the cancellation. Anything else holding the token can trigger the same shutdown. SIGTERM is not handled: a process stopped that way exits at once.
 
 The server is started with `into_make_service_with_connect_info::<SocketAddr>()`, so handlers and layers can extract `ConnectInfo<SocketAddr>`.
+
+### HTTP/2
+
+With the `http2` feature (default), the port serves both HTTP/1.1 and HTTP/2. The protocol is detected per connection, so nothing needs configuring. muxa doesn't terminate TLS, so this is cleartext HTTP/2 ("h2c" with prior knowledge). It's what a proxy or load balancer uses when set to talk HTTP/2 to the app (Cloud Run's end-to-end HTTP/2, Envoy, …), and what gRPC needs. It also allows WebSockets over HTTP/2. Browsers only speak HTTP/2 over TLS, so for them the proxy in front handles TLS and HTTP/2 and forwards to muxa. Check it with `curl --http2-prior-knowledge http://localhost:3000/`.
 
 ## ApiPlugin
 
@@ -217,6 +223,7 @@ Nested routers without a fallback of their own fall through to the app's, so `/a
 | Feature | Default | Effect |
 |---|---|---|
 | `graceful-shutdown` | yes | ctrl-c handling (`tokio/signal`) |
+| `http2` | yes | cleartext HTTP/2 next to HTTP/1.1 (`axum/http2`) |
 | `openapi` | | `ApiPlugin` |
 | `ratelimit` | | the `ratelimit` module |
 | `spa` | | `SpaPlugin`, `spa_assets!` (memory-serve) |

@@ -1,8 +1,10 @@
 //! Postgres-driver Diesel plugin via `diesel-async` + deadpool.
 
 use std::ops::Deref;
+use std::time::Duration;
 
 use bon::Builder;
+use deadpool::Runtime;
 use diesel_async::AsyncPgConnection;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
@@ -42,7 +44,11 @@ impl PgBackend for DieselBackend {
 // muxa-core for any state HList containing a `DieselPool`.
 
 fn default_max_connections() -> u32 {
-    10
+    muxa_core::host::db_pool_size()
+}
+
+fn default_acquire_timeout_secs() -> u64 {
+    30
 }
 
 /// Configuration for [`DieselPlugin`]. Read from `[diesel]`; `DATABASE_URL`
@@ -54,9 +60,17 @@ pub struct DieselConfig {
     /// [`SecretString`] so it's redacted in `Debug`/logs and never copied around
     /// in the clear; the value is exposed only when building the pool.
     pub url: SecretString,
-    /// Maximum number of pool connections.
+    /// Maximum number of pool connections. Defaults to
+    /// [`muxa_core::host::db_pool_size`]: four per CPU the process may use,
+    /// between 4 and 32.
     #[builder(default = default_max_connections())]
     pub max_connections: u32,
+    /// How long getting a connection may take, in seconds: waiting for a free
+    /// slot when the pool is exhausted, and opening a new connection. Past it,
+    /// `pool.get()` returns an error instead of hanging. Defaults to 30 (sqlx's
+    /// `acquire_timeout`); `0` waits forever.
+    #[builder(default = default_acquire_timeout_secs())]
+    pub acquire_timeout_secs: u64,
 }
 
 impl Default for DieselConfig {
@@ -64,6 +78,7 @@ impl Default for DieselConfig {
         Self {
             url: SecretString::from(String::new()),
             max_connections: default_max_connections(),
+            acquire_timeout_secs: default_acquire_timeout_secs(),
         }
     }
 }
@@ -149,19 +164,30 @@ impl<S: State> Plugin<S> for DieselPlugin {
 
         tracing::info!(
             max_connections = cfg.max_connections,
+            acquire_timeout_secs = cfg.acquire_timeout_secs,
             "muxa-diesel[pg]: connecting"
         );
 
-        let manager =
-            AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
-        let pool = Pool::builder(manager)
-            .max_size(cfg.max_connections as usize)
-            .build()
-            .map_err(Error::other)?;
-
+        let pool = build_pool(&cfg)?;
         tracing::info!("muxa-diesel[pg]: pool built");
         Ok(DieselPool(pool))
     }
+}
+
+/// The deadpool pool for `cfg`. Lazy: no connection is opened here.
+fn build_pool(cfg: &DieselConfig) -> Result<Pool<AsyncPgConnection>> {
+    let acquire_timeout =
+        (cfg.acquire_timeout_secs > 0).then(|| Duration::from_secs(cfg.acquire_timeout_secs));
+    let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(cfg.url.expose_secret());
+    Pool::builder(manager)
+        .max_size(cfg.max_connections as usize)
+        .wait_timeout(acquire_timeout)
+        .create_timeout(acquire_timeout)
+        // deadpool enforces its timeouts with this runtime's timer, and
+        // refuses to build a pool with timeouts but no runtime.
+        .runtime(Runtime::Tokio1)
+        .build()
+        .map_err(Error::other)
 }
 
 #[cfg(test)]
@@ -175,6 +201,7 @@ mod tests {
         let cfg = DieselConfig {
             url: SecretString::from("postgres://user:hunter2@db:5432/app".to_owned()),
             max_connections: 7,
+            acquire_timeout_secs: 30,
         };
         let rendered = format!("{cfg:?}");
         assert!(!rendered.contains("hunter2"), "secret leaked: {rendered}");
@@ -184,5 +211,34 @@ mod tests {
         );
         // Non-secret fields still render — only the secret is hidden.
         assert!(rendered.contains("max_connections"));
+    }
+
+    #[test]
+    fn defaults_follow_the_host() {
+        let cfg = DieselConfig::default();
+        assert_eq!(cfg.max_connections, muxa_core::host::db_pool_size());
+        assert_eq!(cfg.acquire_timeout_secs, 30);
+    }
+
+    /// deadpool refuses timeouts without a runtime, so building the pool
+    /// proves it's set. Building opens no connection.
+    #[test]
+    fn pool_builds_with_acquire_timeout() {
+        let cfg = DieselConfig::builder()
+            .url(SecretString::from(
+                "postgres://u:p@127.0.0.1:1/db".to_owned(),
+            ))
+            .max_connections(3)
+            .build();
+        let pool = build_pool(&cfg).unwrap();
+        assert_eq!(pool.status().max_size, 3);
+        assert!(pool.timeouts().wait.is_some());
+        assert!(pool.timeouts().create.is_some());
+
+        let no_timeout = DieselConfig {
+            acquire_timeout_secs: 0,
+            ..cfg
+        };
+        assert!(build_pool(&no_timeout).unwrap().timeouts().wait.is_none());
     }
 }
