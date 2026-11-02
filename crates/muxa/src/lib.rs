@@ -26,11 +26,13 @@ pub use muxa_openapi::{aide, schemars};
 pub use muxa_otel as otel;
 #[cfg(feature = "pgmq")]
 pub use muxa_pgmq as pgmq;
-#[cfg(feature = "sentry")]
+// The `*-no-*` / `*-tls-native` variants enable the same crate as their main
+// feature, so they expose the same items.
+#[cfg(any(feature = "sentry", feature = "sentry-no-tracing"))]
 pub use muxa_sentry as sentry;
-#[cfg(feature = "sqlx")]
+#[cfg(any(feature = "sqlx", feature = "sqlx-tls-native"))]
 pub use muxa_sqlx as sqlx;
-#[cfg(feature = "web")]
+#[cfg(any(feature = "web", feature = "web-no-signal"))]
 pub use muxa_web as web;
 
 /// Common imports for application code. Brings `App`, `AppBuilder`, the
@@ -39,7 +41,7 @@ pub use muxa_web as web;
 pub mod prelude {
     pub use muxa_core::prelude::*;
 
-    #[cfg(feature = "web")]
+    #[cfg(any(feature = "web", feature = "web-no-signal"))]
     pub use muxa_web::WebPlugin;
 
     #[cfg(feature = "ratelimit")]
@@ -50,7 +52,7 @@ pub mod prelude {
     #[cfg(feature = "spa")]
     pub use muxa_web::spa_assets;
 
-    #[cfg(feature = "sqlx")]
+    #[cfg(any(feature = "sqlx", feature = "sqlx-tls-native"))]
     pub use muxa_sqlx::{SqlxBackend, SqlxConfig, SqlxPlugin, SqlxPool};
 
     #[cfg(feature = "sqlite")]
@@ -71,7 +73,7 @@ pub mod prelude {
     #[cfg(feature = "otel")]
     pub use muxa_otel::{OtelConfig, OtelPlugin, TelemetryHandles};
 
-    #[cfg(feature = "sentry")]
+    #[cfg(any(feature = "sentry", feature = "sentry-no-tracing"))]
     pub use muxa_sentry::{SentryConfig, SentryHandle, SentryPlugin};
 
     #[cfg(feature = "openapi")]
@@ -84,6 +86,6 @@ pub mod prelude {
     pub use muxa_auth::DieselSessionStore;
 
     // The aide-aware web plugin (finishes an `ApiRouter` + serves the spec).
-    #[cfg(all(feature = "web", feature = "openapi"))]
+    #[cfg(all(any(feature = "web", feature = "web-no-signal"), feature = "openapi"))]
     pub use muxa_web::ApiPlugin;
 }

@@ -61,7 +61,7 @@ REQUESTS.add(1, &[KeyValue::new("op", "list")]);
 
 The level filter is `RUST_LOG`, the same one that controls stdout. The crates on the export path itself (tonic, hyper, reqwest, the OTel SDK and so on) are hidden from the exported signals, so the exporter does not export its own activity.
 
-When the app shuts down, a background task flushes every provider, and `App::run` waits for it (up to ten seconds).
+When the app's shutdown token is cancelled (ctrl-c, with `muxa-web`'s defaults), a background task flushes every provider, and `App::run` waits for it (up to ten seconds). SIGTERM is not handled, so a process stopped that way, as Docker and Kubernetes do, exits without flushing.
 
 ## Config
 
@@ -88,7 +88,9 @@ The plugin's output on the app state is `TelemetryHandles { service_name, endpoi
 | `logs` | | export `tracing` events as OTel logs |
 | `traces` | | the trace SDK only. Implied by the transports and by `tracing-bridge` |
 
-`http-layer` is a default of this crate, but the [`muxa`](../muxa) facade depends on it with default features off and has no feature that forwards it. An app using only the facade therefore gets no `TraceLayer`. A direct dependency on `muxa-otel` turns it on.
+The [`muxa`](../muxa) facade's `otel` feature includes `http-layer`.
+
+The `TraceLayer` is a local debugging aid. Its request spans and events are DEBUG level under the `tower_http` target, so they show on stdout only with something like `RUST_LOG=info,tower_http=debug`. They are never exported: `tower` is one of the target prefixes kept away from the OTLP and Sentry layers, and it covers `tower_http`.
 
 ## Try it
 
