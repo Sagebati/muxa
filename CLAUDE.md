@@ -101,7 +101,7 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 
 - `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors, `host` (CPUs the process may use, cgroup-aware, and the DB pool-size heuristic). No integrations.
 - `muxa-telemetry` — `TelemetryRegistry` (the global subscriber and its process-wide plugin-layer slot). Depends on no integration.
-- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
+- `muxa-web` — `WebPlugin` (serve loop + shutdown; HTTP/1.1 + cleartext HTTP/2 via the default `http2` feature), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.

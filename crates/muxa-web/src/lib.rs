@@ -284,14 +284,13 @@ async fn serve_loop(
         banner::print(bound, &routes);
     }
 
-    tracing::info!(%bound, backlog, tcp_nodelay = cfg.tcp_nodelay, "muxa-web: serving");
-
-    let nodelay = cfg.tcp_nodelay;
-    let listener = listener.tap_io(move |tcp| {
-        if nodelay && let Err(err) = tcp.set_nodelay(true) {
-            tracing::trace!(%err, "muxa-web: failed to set TCP_NODELAY");
-        }
-    });
+    tracing::info!(
+        %bound,
+        backlog,
+        tcp_nodelay = cfg.tcp_nodelay,
+        http2 = cfg!(feature = "http2"),
+        "muxa-web: serving"
+    );
 
     // Bridge ctrl_c to the shutdown token (additive — anyone else can also
     // cancel it). Only compiled with the `graceful-shutdown` feature, which
@@ -307,7 +306,26 @@ async fn serve_loop(
         });
     }
 
-    let graceful = shutdown.clone();
+    serve(listener, router, cfg.tcp_nodelay, shutdown).await?;
+
+    tracing::info!("muxa-web: serve loop ended");
+    Ok(())
+}
+
+/// Accept and serve connections on `listener` until `shutdown` is cancelled,
+/// then drain the in-flight ones. Each connection speaks HTTP/1.1, or HTTP/2
+/// with the `http2` feature: hyper tells them apart from the first bytes.
+async fn serve(
+    listener: TcpListener,
+    router: Router,
+    tcp_nodelay: bool,
+    shutdown: ShutdownToken,
+) -> io::Result<()> {
+    let listener = listener.tap_io(move |tcp| {
+        if tcp_nodelay && let Err(err) = tcp.set_nodelay(true) {
+            tracing::trace!(%err, "muxa-web: failed to set TCP_NODELAY");
+        }
+    });
     // Serve with per-connection `ConnectInfo<SocketAddr>` so handlers and tower
     // layers (e.g. the per-IP rate limiter) can read the client's peer address.
     // Additive and cheap — handlers that don't need it are unaffected.
@@ -315,11 +333,8 @@ async fn serve_loop(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move { graceful.cancelled().await })
-    .await?;
-
-    tracing::info!("muxa-web: serve loop ended");
-    Ok(())
+    .with_graceful_shutdown(async move { shutdown.cancelled().await })
+    .await
 }
 
 /// Listen on `(host, port)` with `backlog`, trying each address `host` resolves
@@ -416,6 +431,71 @@ mod tests {
             }
             assert!(listener.is_ok(), "{host}: {listener:?}");
         }
+    }
+
+    /// Serve a one-route app on an ephemeral port; returns its address.
+    async fn spawn_app(shutdown: ShutdownToken) -> SocketAddr {
+        let listener = bind("127.0.0.1", 0, 128).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = Router::new().route("/", axum::routing::get(|| async { "hi" }));
+        tokio::spawn(serve(listener, router, true, shutdown));
+        addr
+    }
+
+    /// GET `/` over a fresh connection; returns the response's HTTP version
+    /// and body.
+    async fn get(addr: SocketAddr, http2: bool) -> (http::Version, String) {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper::body::Bytes;
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let io = TokioIo::new(tokio::net::TcpStream::connect(addr).await.unwrap());
+        let req = http::Request::get(format!("http://{addr}/"))
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let res = if http2 {
+            let (mut sender, conn) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+                    .await
+                    .unwrap();
+            tokio::spawn(conn);
+            sender.send_request(req).await.unwrap()
+        } else {
+            let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+            tokio::spawn(conn);
+            sender.send_request(req).await.unwrap()
+        };
+        let version = res.version();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        (version, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn serves_http1() {
+        let shutdown = ShutdownToken::new();
+        let addr = spawn_app(shutdown.clone()).await;
+        assert_eq!(
+            get(addr, false).await,
+            (http::Version::HTTP_11, "hi".to_owned())
+        );
+        shutdown.cancel();
+    }
+
+    /// Cleartext HTTP/2 with prior knowledge, on the same port as HTTP/1.1.
+    #[cfg(feature = "http2")]
+    #[tokio::test]
+    async fn serves_http2_on_the_same_port() {
+        let shutdown = ShutdownToken::new();
+        let addr = spawn_app(shutdown.clone()).await;
+        assert_eq!(
+            get(addr, true).await,
+            (http::Version::HTTP_2, "hi".to_owned())
+        );
+        assert_eq!(
+            get(addr, false).await,
+            (http::Version::HTTP_11, "hi".to_owned())
+        );
+        shutdown.cancel();
     }
 
     #[tokio::test]

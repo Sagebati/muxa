@@ -70,6 +70,10 @@ With the `graceful-shutdown` feature (default), ctrl-c cancels the app's `Shutdo
 
 The server is started with `into_make_service_with_connect_info::<SocketAddr>()`, so handlers and layers can extract `ConnectInfo<SocketAddr>`.
 
+### HTTP/2
+
+With the `http2` feature (default), the port serves both HTTP/1.1 and HTTP/2. The protocol is detected per connection, so nothing needs configuring. muxa doesn't terminate TLS, so this is cleartext HTTP/2 ("h2c" with prior knowledge). It's what a proxy or load balancer uses when set to talk HTTP/2 to the app (Cloud Run's end-to-end HTTP/2, Envoy, …), and what gRPC needs. It also allows WebSockets over HTTP/2. Browsers only speak HTTP/2 over TLS, so for them the proxy in front handles TLS and HTTP/2 and forwards to muxa. Check it with `curl --http2-prior-knowledge http://localhost:3000/`.
+
 ## ApiPlugin
 
 With the `openapi` feature, `ApiPlugin` replaces `WebPlugin` when your routes are an [aide](https://docs.rs/aide) `ApiRouter`. It finishes the router into axum routes plus an OpenAPI document, serves the document and a docs page, and runs the serve loop.
@@ -219,6 +223,7 @@ Nested routers without a fallback of their own fall through to the app's, so `/a
 | Feature | Default | Effect |
 |---|---|---|
 | `graceful-shutdown` | yes | ctrl-c handling (`tokio/signal`) |
+| `http2` | yes | cleartext HTTP/2 next to HTTP/1.1 (`axum/http2`) |
 | `openapi` | | `ApiPlugin` |
 | `ratelimit` | | the `ratelimit` module |
 | `spa` | | `SpaPlugin`, `spa_assets!` (memory-serve) |

@@ -19,9 +19,10 @@ default = ["web", "otel"]
 # a build error.
 # ---------------------------------------------------------------------------
 
-# Web (axum serve loop + graceful shutdown).
-web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown"]
-web-no-signal       = ["dep:muxa-web"]  # bind+serve only, no ctrl-c handler
+# Web (axum serve loop + graceful shutdown), HTTP/1.1 and cleartext HTTP/2 on
+# the same port (muxa-web's `http2`).
+web                 = ["dep:muxa-web", "muxa-web/graceful-shutdown", "muxa-web/http2"]
+web-no-signal       = ["dep:muxa-web", "muxa-web/http2"]  # bind+serve only, no ctrl-c handler
 # Per-IP rate limiting layer (muxa_web::ratelimit; tower_governor).
 ratelimit           = ["dep:muxa-web", "muxa-web/ratelimit"]
 # Single-page app build served from memory as the fallback (muxa_web::spa;
