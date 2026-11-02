@@ -7,7 +7,7 @@ Through the facade this is the `otel` feature (on by default) and the `otel-*` f
 ## Usage
 
 ```rust
-App::default()
+muxa::app!()
     .with_plugin(OtelPlugin).await?      // early, so later plugins' startup logs are exported too
     // … other plugins, WebPlugin last
     .run().await
@@ -65,16 +65,14 @@ When the app's shutdown token is cancelled (ctrl-c, with `muxa-web`'s defaults),
 
 ## Config
 
-`[otel]`, or `MUXA_OTEL__*`:
+`[otel]`, or `<APP>_OTEL__*`. When the app sets neither, `OTEL_SERVICE_NAME` and `OTEL_EXPORTER_OTLP_ENDPOINT` fill `service_name` and `endpoint`:
 
 | Key | Default | |
 |---|---|---|
 | `service_name` | `"muxa-app"` | the `service.name` resource attribute |
-| `endpoint` | unset | OTLP collector, e.g. `http://localhost:4317` for gRPC. For HTTP see the note below |
+| `endpoint` | unset | OTLP collector, e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP). Over HTTP it's a base URL: each signal goes to `/v1/traces`, `/v1/metrics` or `/v1/logs` under it |
 | `timeout_secs` | `10` | per-export request timeout |
 | `metric_interval_secs` | `60` | how often metrics are pushed |
-
-Over HTTP (`otlp-http`) the endpoint is used exactly as written, for every signal: no `/v1/traces`, `/v1/metrics` or `/v1/logs` is appended. Give the full URL of one signal, e.g. `http://localhost:4318/v1/traces`, and compile in only that signal. To export more than one signal, use gRPC.
 
 The plugin's output on the app state is `TelemetryHandles { service_name, endpoint }`. `endpoint` is `None` when export is off.
 
@@ -84,7 +82,7 @@ The plugin's output on the app state is `TelemetryHandles { service_name, endpoi
 |---|---|---|
 | `http-layer` | yes | adds tower-http's `TraceLayer` to the router |
 | `otlp-tonic` | | OTLP over gRPC |
-| `otlp-http` | | OTLP over HTTP, one signal only (see Config). If both transports are on, gRPC is used |
+| `otlp-http` | | OTLP over HTTP. If both transports are on, gRPC is used |
 | `tracing-bridge` | | export `tracing` spans as OTel traces |
 | `metrics` | | meter provider with a periodic OTLP reader |
 | `logs` | | export `tracing` events as OTel logs |

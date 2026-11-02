@@ -13,7 +13,7 @@ use muxa::prelude::*;
 
 #[tokio::main]
 async fn main() -> muxa::Result<()> {
-    App::default()
+    muxa::app!()
         .with_plugin(DieselPlugin::new()).await?
         .with_plugin(PgmqPlugin::<DieselBackend>::new().queues(["jobs"])).await?
         // … WebPlugin last
@@ -39,7 +39,7 @@ At build the plugin:
 
 ## Config
 
-`[pgmq]`, or `MUXA_PGMQ__*`:
+`[pgmq]`, or `<APP>_PGMQ__*`:
 
 | Key | Default | |
 |---|---|---|

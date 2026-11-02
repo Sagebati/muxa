@@ -12,10 +12,12 @@ The framework's lints and `clippy.toml` are intentionally kept **identical** to 
 
 Tasks are driven by `just` (see `justfile`):
 
-- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq`. Run this before declaring work done.
+- `just check` — the full CI gate: `fmt-check` + `lint` + `test` + `test-pgmq` + `test-spa`. Run this before declaring work done.
 - `just lint` — `cargo clippy --workspace --all-targets --no-deps -- -D warnings`. Warnings are errors.
 - `just fmt` / `just fmt-check` — format / check formatting.
 - `just test` — `cargo test --workspace` (default features).
+- `just test-spa` — lint + test muxa-web's feature-gated `spa` module and the `spa` example.
+- `just test-auth` — muxa-auth with all features (OIDC, password, diesel store, openapi). The diesel-store tests also need `MUXA_AUTH_TEST_DATABASE_URL`; they skip without it.
 - `just test-pgmq` — pgmq capability composition tests across **both** backends: `cargo test -p muxa-pgmq --features sqlx,diesel-async --tests`. These are not covered by `just test` and must be run separately.
 - `just hello` / `just web-only` — run the examples (cargo-native `examples/` of the `muxa` facade crate; `cargo run --example hello --features sqlite` / `cargo run --example web_only`).
 - `just diesel-example` — bring up Postgres + a `grafana/otel-lgtm` collector via docker compose and run the `diesel_widgets` JSON-API example, exporting OTLP traces/metrics/logs (view in Grafana at `http://localhost:3001`); `just diesel-example-down` tears it down.
@@ -32,7 +34,7 @@ Some crates have feature-gated tests/impls — when testing a specific crate, pa
 An app is built by chaining plugins, each `await`ed:
 
 ```rust
-App::with_config_file("muxa.toml")
+muxa::app!()                            // config named after the calling crate
     .with_plugin(OtelPlugin).await?      // observability first
     .with_plugin(SqlitePlugin).await?    // a DB pool
     .with_plugin(WebPlugin::new(routes)).await?  // web ALWAYS last
@@ -56,6 +58,7 @@ This pattern is how you add a plugin that consumes another's resource without or
 
 `Plugin::build` also gets `&mut BuildCtx` (`muxa-core/src/ctx.rs`), the mutable channel separate from the (immutable, type-growing) state HList. Plugins use it to:
 - `ctx.router.mount(prefix, router)` / `mount_manual(...)` / `layer(...)` — contribute routes and middleware. Layers are applied in registration order, each wrapping the previous ones, so the **last** registered is outermost: middleware order follows plugin order.
+- `ctx.router.fallback(router)` — the one app-wide fallback (setting a second is an error), applied at `compose()` after every mount and before the layers. It sees the full URI, and nested routers without their own fallback fall through to it (`SpaPlugin` uses it).
 - `ctx.tasks.spawn(name, |shutdown| async {...})` — register background tasks (these *must* be `Send + 'static`; they're spawned at `run()`).
 - `ctx.telemetry` — `add_layer(...)` pushes a tracing-subscriber layer onto the one process-wide slot (one layer per type; a second app in the same process shares the slot). A plugin whose layer exports over the network calls `exclude_targets(...)` with the crates on its export path. `muxa-telemetry` knows none of its users.
 - `ctx.set_serve_fn(...)` — exactly one plugin (the web plugin) fills this slot.
@@ -74,11 +77,13 @@ At `App::run`: background tasks are spawned, the router is `compose()`d (auto-mo
 
 ### Config
 
-figment-based (`muxa-core/src/config.rs`). Layered, last wins:
-1. one TOML file — `$MUXA_CONFIG` if set, else `./muxa.toml` (missing file is fine);
-2. env vars prefixed `MUXA_`, `__` as the key separator — `MUXA_PGMQ__URL` → `pgmq.url`.
+figment-based (`muxa-core/src/config.rs`). An app's configuration is **named after the app**, never after muxa: `muxa::app!()` = `App::named(env!("CARGO_PKG_NAME"))`, and the env prefix is derived from that name (`env_prefix("katago-ws")` = `KATAGO_WS_`). Layered, last wins:
+1. one TOML file — `$<PREFIX>CONFIG` if set, else `./config.toml` (missing file is fine);
+2. env vars with the app's prefix, `__` as the key separator — `KATAGO_WS_PGMQ__URL` → `pgmq.url`, `KATAGO_WS_ENV` → the run mode.
 
-The `MUXA_` env prefix is the default (`DEFAULT_ENV_PREFIX`) but is **configurable** so a consumer app can namespace its own env vars: `App::with_env_prefix("MYAPP_")` or `App::with_config_file_and_env_prefix(path, "MYAPP_")` (and the free fns `load_figment_with_prefix` / `load_figment_from_with_prefix`). A custom prefix also renames the bootstrap config-path var to `{prefix}CONFIG`. The prefix includes its trailing separator.
+Below both layers sit a plugin's `ENV_FALLBACKS` (`EnvFallback { var, key }`): conventional unprefixed vars (`DATABASE_URL`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `PORT`) that fill a key of the plugin's section only when the file and `<APP>_*` leave it unset. Applied per plugin in `Sections::get_or_env` (the default `read_config` passes them), so `AppBuilder::figment()` doesn't show them. Don't map `HOST` — shells set it to the hostname.
+
+`App::with_figment(load_figment_from(path, name))` is the escape hatch (the examples use it to pin their file to the manifest dir). There is no `App::default()` and no `MUXA_` prefix: a plain function can't see its caller's crate name, so the macro is the entry point. In docs, write a plugin's env vars as `<APP>_PGMQ__*`.
 
 Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: DeserializeOwned + Default`; an absent section falls back to `Config::default()`, a present-but-invalid one is an error. Use `""` for "no config". A plugin made of several sections overrides `read_config` and reads each with `Sections::get` (see `ApiPlugin`: `[web]` + `[openapi]`); that is the only place plugin code touches configuration, and it can't see more than the sections it names. Don't print raw configuration anywhere — values are plain strings there. Secret values (DB url, Sentry DSN) are wrapped in `secrecy::SecretString` in the typed `Config` so Debug/logs redact them.
 
@@ -86,18 +91,19 @@ Each plugin declares `const CONFIG_PREFIX` (e.g. `"pgmq"`) and a `Config: Deseri
 
 - The `muxa` facade (`crates/muxa/Cargo.toml`) gates every integration behind a top-level feature and forwards the integration's own features. It uses `dep:` to gate optional deps and `muxa-pgmq?/sqlx`-style optional-activation so enabling a sub-feature without its parent is a no-op rather than a build error. `default = ["web", "otel"]`; `full` is the everything bundle.
 - Internal `workspace.dependencies` use `default-features = false` so the facade controls which features cascade.
-- Several third-party pins are deliberate and load-bearing — read the comments in the root `Cargo.toml` before bumping: `pgmq` is a pinned git rev of the Sagebati fork (tracks diesel-async 0.9); `aide` is exact-pinned (`=0.16.0-alpha.4`) so the `OpenApi` type unifies across crates; `diesel-async`/`diesel_migrations` track diesel 2.x. diesel-async is Postgres/MySQL only (no SQLite). pgmq is Postgres-only (no SQLite backend).
+- Several third-party pins are deliberate and load-bearing — read the comments in the root `Cargo.toml` before bumping: `pgmq` is a pinned git rev of the Sagebati fork's `install-only` branch (upstream `main` plus a diesel-async SQL installer; tracks sqlx 0.9 / diesel-async 0.9); `aide` is exact-pinned (`=0.16.0-alpha.4`) so the `OpenApi` type unifies across crates; `diesel-async`/`diesel_migrations` track diesel 2.x. diesel-async is Postgres/MySQL only (no SQLite). pgmq is Postgres-only (no SQLite backend).
 - App code conventionally does `use muxa::prelude::*;`, which brings in `App`, the `Plugin` trait, capability traits, and one canonical plugin per enabled feature.
 
 ## Crate map
 
 - `muxa-core` — `Plugin` trait, HList `State`, capability traits, `App`/`AppBuilder`, `BuildCtx`, config, errors. No integrations.
 - `muxa-telemetry` — `TelemetryRegistry` (the global subscriber and its process-wide plugin-layer slot). Depends on no integration.
-- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`).
+- `muxa-web` — `WebPlugin` (serve loop + shutdown), `ratelimit` (tower_governor), `ApiPlugin` (with `openapi`), `SpaPlugin` (with `spa`: a memory-serve frontend build as the app's `RouterRegistry::fallback`).
 - `muxa-sqlx` — `SqlxPlugin`/`SqlxPool` (Postgres) and `SqlitePlugin`/`SqlitePool`.
 - `muxa-diesel` — `DieselPlugin` (diesel-async PG/MySQL), embedded migrations, sentry instrumentation.
 - `muxa-pgmq` — `PgmqPlugin<B, Idx>`, install-only (`Output = ()`), consumes a pool via `HasPgExecutorFor`.
 - `muxa-otel` / `muxa-sentry` — observability plugins (push tracing layers via `ctx.telemetry`).
+- `muxa-auth` — `AuthPlugin`: cookie sessions (tower-sessions), login state (axum-login), OAuth2/OIDC sign-in routes (oauth2/openidconnect), a cross-origin guard, password helpers, and `DieselSessionStore`. The app supplies an `AuthnBackend` (its users) and an `IdentityResolver` (provider identity → user).
 - `muxa-openapi` — aide-based OpenAPI doc + re-exports `aide`/`schemars` at the pinned versions.
 - `diesel-sentry` — framework-agnostic diesel→sentry instrumentation (no muxa dep); wrapped by `muxa-diesel`'s `sentry` feature.
 - `muxa` — facade; its `examples/` (cargo-native, not a workspace member) hold the end-to-end demos (`hello` = otel+sqlite+web; `web_only` = minimal; `diesel_widgets` = diesel/Postgres JSON API with embedded migrations, emitting OTLP traces/metrics/logs to a `grafana/otel-lgtm` collector — both via docker-compose).

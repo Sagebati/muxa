@@ -7,7 +7,8 @@
 //!    events flush on shutdown.
 //! 2. Install `sentry-tower` middleware (per-request scope + HTTP context
 //!    capture + optional transactions for performance monitoring) on the
-//!    router.
+//!    router. Transactions are named after the matched route template
+//!    (`GET /jobs/{id}`), so Sentry groups them per endpoint.
 //! 3. **With the `tracing-bridge` feature**: push `sentry-tracing::layer()`
 //!    onto the shared tracing subscriber so `tracing` events and
 //!    spans flow into Sentry as breadcrumbs / events / transactions.
@@ -23,7 +24,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa::Result<()> {
-//!     App::default()
+//!     muxa::app!()
 //!         .with_plugin(SentryPlugin).await?
 //!         .with_plugin(OtelPlugin).await?
 //!         // ... add WebPlugin last
@@ -35,15 +36,19 @@
 #![warn(missing_docs)]
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use bon::Builder;
-use muxa_core::{BuildCtx, Plugin, Result, RunMode, State};
+use muxa_core::{BuildCtx, EnvFallback, Error, Plugin, Result, RunMode, State};
 use secrecy::{ExposeSecret as _, SecretString};
 use sentry::ClientInitGuard;
 use sentry_tower::{NewSentryLayer, SentryHttpLayer};
 use serde::Deserialize;
 
-/// Configuration for [`SentryPlugin`]. Read from `[sentry]`.
+/// Configuration for [`SentryPlugin`]. Read from `[sentry]`; the SDK's own
+/// `SENTRY_DSN`, `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` fill `dsn`,
+/// `environment` and `release` when the app's configuration leaves them unset.
 ///
 /// `Default` is hand-written (not derived) so the values match the bon
 /// `#[builder(default = …)]` attributes. This matters because `#[serde(default)]`
@@ -54,8 +59,9 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct SentryConfig {
     /// Sentry DSN. If `None`/empty, the SDK initializes a no-op client and
-    /// no events are sent — useful for development. A [`SecretString`] so it's
-    /// redacted in `Debug`/logs; exposed only to parse it at init.
+    /// no events are sent — useful for development. A DSN that doesn't parse
+    /// fails the build instead of silently disabling Sentry. A [`SecretString`]
+    /// so it's redacted in `Debug`/logs; exposed only to parse it at init.
     pub dsn: Option<SecretString>,
     /// Logical environment (e.g. `"development"`, `"production"`). When unset,
     /// it defaults to the app-wide [`RunMode`](muxa_core::RunMode) label
@@ -73,6 +79,16 @@ pub struct SentryConfig {
     /// samples everything (full local visibility). Set it explicitly — including
     /// `0.0` — to override.
     pub traces_sample_rate: Option<f32>,
+    /// Per-transaction overrides of [`traces_sample_rate`](Self::traces_sample_rate),
+    /// keyed by the exact transaction name — `"GET /healthz"` (method + route
+    /// template) for a request, the span name for a `tracing` root span. `0.0`
+    /// drops a noisy transaction (a probe, a polled endpoint) entirely.
+    ///
+    /// A transaction continuing an incoming trace keeps its parent's sampling
+    /// decision either way, so a distributed trace is never cut in half. Muxa's
+    /// own `muxa.task` (a background task's lifetime span) defaults to `0.0`.
+    #[builder(default)]
+    pub transaction_sample_rates: HashMap<String, f32>,
     /// Attach stack traces to every captured event.
     #[builder(default = true)]
     pub attach_stacktrace: bool,
@@ -104,6 +120,7 @@ impl Default for SentryConfig {
             environment: None,
             release: None,
             traces_sample_rate: None,
+            transaction_sample_rates: HashMap::new(),
             attach_stacktrace: true,
             send_default_pii: false,
             http_transactions: true,
@@ -125,6 +142,30 @@ pub fn default_traces_sample_rate(mode: RunMode) -> f32 {
     }
 }
 
+/// Transactions sampled at a fixed rate unless
+/// [`SentryConfig::transaction_sample_rates`] says otherwise.
+///
+/// `muxa.task` is the span each background task runs in: it lives as long as
+/// the app, so as a transaction it would reach Sentry only at shutdown, cut at
+/// the SDK's 1000-span cap. Work in a task that should be traced starts a trace
+/// of its own (a fresh hub with no active span).
+const DEFAULT_TRANSACTION_SAMPLE_RATES: &[(&str, f32)] = &[("muxa.task", 0.0)];
+
+/// The sample rate for one transaction: the parent's decision when it continues
+/// an incoming trace, else its [`SentryConfig::transaction_sample_rates`] entry,
+/// else `default_rate`.
+fn sample_rate_for(
+    rates: &HashMap<String, f32>,
+    default_rate: f32,
+    name: &str,
+    parent_sampled: Option<bool>,
+) -> f32 {
+    parent_sampled.map_or_else(
+        || rates.get(name).copied().unwrap_or(default_rate),
+        f32::from,
+    )
+}
+
 /// Plugin output handle.
 ///
 /// Holds the `ClientInitGuard` so Sentry's worker thread isn't dropped
@@ -141,6 +182,20 @@ impl<S: State> Plugin<S> for SentryPlugin {
     type Output = SentryHandle;
     type Config = SentryConfig;
     const CONFIG_PREFIX: &'static str = "sentry";
+    const ENV_FALLBACKS: &'static [EnvFallback] = &[
+        EnvFallback {
+            var: "SENTRY_DSN",
+            key: "dsn",
+        },
+        EnvFallback {
+            var: "SENTRY_ENVIRONMENT",
+            key: "environment",
+        },
+        EnvFallback {
+            var: "SENTRY_RELEASE",
+            key: "release",
+        },
+    ];
 
     async fn build(
         self,
@@ -149,21 +204,27 @@ impl<S: State> Plugin<S> for SentryPlugin {
         ctx: &mut BuildCtx,
     ) -> Result<SentryHandle> {
         // Treat empty string as None. The DSN is a secret — expose it only to
-        // parse it here, never to logs.
-        let raw_dsn = cfg
+        // parse it here, never to logs (the parse error doesn't echo it).
+        let dsn = cfg
             .dsn
             .as_ref()
             .map(|secret| secret.expose_secret())
-            .filter(|raw| !raw.is_empty());
-        let dsn = raw_dsn.and_then(|raw| raw.parse::<sentry::types::Dsn>().ok());
+            .filter(|raw| !raw.is_empty())
+            .map(|raw| {
+                raw.parse::<sentry::types::Dsn>().map_err(|err| {
+                    Error::other(format!(
+                        "muxa-sentry: `sentry.dsn` is not a valid DSN: {err}"
+                    ))
+                })
+            })
+            .transpose()?;
 
         // The app-wide run mode is the source of truth for env-aware defaults.
         let mode = ctx.mode;
         // Default the environment label to the run mode; an explicit config wins.
         let environment = cfg
             .environment
-            .clone()
-            .unwrap_or_else(|| mode.as_str().to_owned());
+            .map_or(Cow::Borrowed(mode.as_str()), Cow::Owned);
         // Unset rate ⇒ pick from the run mode (prod: light sampling, dev: full).
         // An explicit value (including 0.0, to disable) wins.
         let traces_sample_rate = cfg
@@ -177,11 +238,24 @@ impl<S: State> Plugin<S> for SentryPlugin {
         // INFO/WARN→Log and ERROR→Event|Log once that feature is active.
         let enable_logs = cfg.logs && cfg!(feature = "tracing-bridge");
 
+        // Per-transaction rates: the built-in defaults, then the app's overrides.
+        let overrides = cfg.transaction_sample_rates.len();
+        let mut rates: HashMap<String, f32> = DEFAULT_TRANSACTION_SAMPLE_RATES
+            .iter()
+            .map(|&(name, rate)| (name.to_owned(), rate))
+            .collect();
+        rates.extend(cfg.transaction_sample_rates);
+        let traces_sampler: Arc<sentry::TracesSampler> =
+            Arc::new(move |tx: &sentry::TransactionContext| {
+                sample_rate_for(&rates, traces_sample_rate, tx.name(), tx.sampled())
+            });
+
         let options = sentry::ClientOptions {
             dsn,
-            environment: Some(Cow::Owned(environment.clone())),
-            release: cfg.release.clone().map(Cow::Owned),
+            environment: Some(environment),
+            release: cfg.release.map(Cow::Owned),
             traces_sample_rate,
+            traces_sampler: Some(traces_sampler),
             attach_stacktrace: cfg.attach_stacktrace,
             send_default_pii: cfg.send_default_pii,
             enable_logs,
@@ -217,15 +291,18 @@ impl<S: State> Plugin<S> for SentryPlugin {
             // Keep what that transport logs away from the bridge, or it would
             // report its own reporting.
             ctx.telemetry
-                .exclude_targets(&["h2", "hyper", "reqwest", "tower"]);
+                .exclude_targets(&["h2", "hyper", "hyper_util", "reqwest", "tower"]);
             ctx.telemetry.add_layer(sentry_tracing::layer());
         }
 
-        if raw_dsn.is_some() {
+        // Whether events are actually sent.
+        if guard.is_enabled() {
+            let options = guard.options();
             tracing::info!(
-                env = environment,
-                release = cfg.release.as_deref().unwrap_or("-"),
+                env = options.environment.as_deref().unwrap_or("-"),
+                release = options.release.as_deref().unwrap_or("-"),
                 traces_sample_rate,
+                transaction_rate_overrides = overrides,
                 logs = enable_logs,
                 "muxa-sentry: initialized"
             );
@@ -239,7 +316,42 @@ impl<S: State> Plugin<S> for SentryPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::SentryConfig;
+    use figment::Figment;
+    use figment::providers::{Format as _, Toml};
+    use muxa_core::App;
+
+    use std::collections::HashMap;
+
+    use super::{SentryConfig, SentryPlugin, sample_rate_for};
+
+    /// A named transaction takes its override, any other the default rate, and
+    /// one continuing a trace its parent's decision — even over an override.
+    #[test]
+    fn sample_rate_prefers_parent_then_override_then_default() {
+        let rates = HashMap::from([("GET /healthz".to_owned(), 0.0)]);
+        assert_eq!(sample_rate_for(&rates, 0.5, "GET /healthz", None), 0.0);
+        assert_eq!(sample_rate_for(&rates, 0.5, "GET /jobs/{id}", None), 0.5);
+        assert_eq!(
+            sample_rate_for(&rates, 0.5, "GET /healthz", Some(true)),
+            1.0
+        );
+        assert_eq!(
+            sample_rate_for(&rates, 0.5, "GET /jobs/{id}", Some(false)),
+            0.0
+        );
+    }
+
+    /// The overrides read from a `[sentry.transaction_sample_rates]` table, whose
+    /// keys (`METHOD /route`) need TOML's quoted form.
+    #[test]
+    fn transaction_sample_rates_read_from_toml() {
+        let config = Toml::string(
+            "[sentry]\ntraces_sample_rate = 1.0\n\n[sentry.transaction_sample_rates]\n\"GET /healthz\" = 0.0\n",
+        );
+        let cfg: SentryConfig = Figment::from(config).extract_inner("sentry").unwrap();
+        assert_eq!(cfg.transaction_sample_rates.get("GET /healthz"), Some(&0.0));
+        assert_eq!(cfg.traces_sample_rate, Some(1.0));
+    }
 
     /// `#[serde(default)]` fills omitted fields from `Default` — which must be
     /// the hand-written impl, not a derived all-`false`. Regression guard: an
@@ -253,6 +365,7 @@ mod tests {
         assert!(cfg.logs, "logs must default true");
         assert!(!cfg.send_default_pii, "send_default_pii must default false");
         assert!(cfg.traces_sample_rate.is_none(), "sample rate stays unset");
+        assert!(cfg.transaction_sample_rates.is_empty(), "no rate overrides");
     }
 
     /// An explicit `false` from config must still win over the default.
@@ -263,5 +376,26 @@ mod tests {
         assert!(!cfg.logs);
         assert!(!cfg.http_transactions);
         assert!(cfg.attach_stacktrace, "untouched field keeps its default");
+    }
+
+    /// A DSN that doesn't parse fails the build rather than quietly disabling
+    /// Sentry — and the error doesn't leak the DSN.
+    #[tokio::test]
+    async fn invalid_dsn_fails_the_build() {
+        let config = Toml::string("[sentry]\ndsn = \"htps//secret-key@o1.ingest.sentry.io\"\n");
+        let result = App::with_figment(Figment::from(config))
+            .with_plugin(SentryPlugin)
+            .await;
+        let Err(err) = result else {
+            panic!("an invalid DSN must fail the build");
+        };
+        let mut chain = err.to_string();
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            chain.push_str(&format!(": {cause}"));
+            source = cause.source();
+        }
+        assert!(chain.contains("not a valid DSN"), "{chain}");
+        assert!(!chain.contains("secret-key"), "DSN leaked: {chain}");
     }
 }

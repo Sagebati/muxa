@@ -13,7 +13,6 @@ muxa-telemetry = { workspace = true }
 dupe        = { workspace = true }
 tokio       = { workspace = true }
 tokio-util  = { workspace = true }
-futures     = { workspace = true }
 axum        = { workspace = true }
 tower       = { workspace = true }
 http        = { workspace = true }

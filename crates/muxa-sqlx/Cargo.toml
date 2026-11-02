@@ -45,7 +45,7 @@ migrate          = ["sqlx/migrate"]
 # Emit `tracing` events per query (query text, duration, rows affected).
 # These flow through the shared `muxa-telemetry` subscriber to whichever
 # backends are registered (fmt, OTel, Sentry).
-# Note: sqlx 0.8 emits tracing events when its `tracing` feature is on,
+# Note: sqlx 0.9 emits tracing events when its `tracing` feature is on,
 # which is the default. We expose this flag for completeness; disabling
 # it requires also clearing `sqlx`'s own defaults at the workspace level.
 db-traces        = []

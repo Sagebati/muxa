@@ -34,10 +34,10 @@ The slot holds one layer per type. Adding a layer whose type is already there re
 A layer that ships events over the network would also capture what its own transport logs, and export that too. The plugin that owns such a layer names the crates on its export path:
 
 ```rust
-ctx.telemetry.exclude_targets(&["h2", "hyper", "reqwest", "tower"]);
+ctx.telemetry.exclude_targets(&["h2", "hyper", "hyper_util", "reqwest", "tower"]);
 ```
 
-Those targets are then hidden from every plugin layer. Matching is by prefix, like a `RUST_LOG` directive: `"hyper"` also covers `hyper::client` and `hyper_util`. They still reach stdout, so export errors stay visible locally.
+Those targets are then hidden from every plugin layer. A target matches a crate when it is the crate or one of its modules: `"hyper"` covers `hyper::client` but not `hyper_util`, so name each crate on the path. That keeps `"tower"` from also hiding `tower_http`'s request spans. They still reach stdout, so export errors stay visible locally.
 
 `muxa-otel` and `muxa-sentry` both do this for their transports.
 

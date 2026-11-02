@@ -13,17 +13,17 @@ repository.workspace = true
 # here when its own `sqlx`/`diesel` feature is enabled.
 default = []
 
+# Both backends go through pgmq's `Queue` trait, which pgmq gates behind
+# `queue-experimental`.
+#
 # Enable the sqlx backend impl (`Plugin` for `PgmqPlugin<SqlxBackend, _>`).
 # Pgmq is Postgres-only, so we force `muxa-sqlx/postgres` + `sqlx/postgres`
 # here regardless of the consumer's wider feature set.
-sqlx          = ["pgmq/sqlx", "dep:muxa-sqlx", "muxa-sqlx/postgres", "dep:sqlx", "sqlx/postgres"]
+sqlx          = ["pgmq/sqlx", "pgmq/queue-experimental", "dep:muxa-sqlx", "muxa-sqlx/postgres", "dep:sqlx", "sqlx/postgres"]
 # Enable the diesel-async backend impl (`Plugin` for `PgmqPlugin<DieselBackend, _>`).
 # Pgmq is Postgres-only, so we force `muxa-diesel/postgres` (which itself
 # pulls in `diesel-async/postgres`) regardless of the consumer's setup.
-diesel-async  = ["pgmq/diesel-async", "dep:muxa-diesel", "muxa-diesel/postgres", "dep:diesel-async", "diesel-async/postgres"]
-
-# Forward pgmq fork's `tracing` feature — emits spans around queue ops.
-tracing-spans = ["pgmq/tracing"]
+diesel-async  = ["pgmq/diesel-async", "pgmq/queue-experimental", "dep:muxa-diesel", "muxa-diesel/postgres", "dep:diesel-async", "diesel-async/postgres"]
 
 [dependencies]
 muxa-core    = { workspace = true }

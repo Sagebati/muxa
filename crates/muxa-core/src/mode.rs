@@ -13,7 +13,7 @@ use serde::Serialize;
 /// it. Resolution order (see [`from_figment`](RunMode::from_figment)):
 ///
 /// 1. The top-level `env` config key — settable in the TOML file
-///    (`env = "production"`) or via the prefixed env var (`MUXA_ENV=production`).
+///    (`env = "production"`) or via the app's env var (`KATAGO_WS_ENV=production`).
 ///    Case-insensitive; accepts `dev`/`development`/`debug` and
 ///    `prod`/`production`/`release`.
 /// 2. Otherwise the compiled **build profile**: a debug build ⇒ [`Development`],
@@ -136,12 +136,12 @@ mod tests {
     )]
     fn figment_env_key_overrides_build_profile() {
         figment::Jail::expect_with(|jail| {
-            jail.set_env("MUXA_ENV", "production");
-            let fig = crate::config::load_figment();
+            jail.set_env("APP_ENV", "production");
+            let fig = crate::config::load_figment("app");
             assert_eq!(RunMode::from_figment(&fig), RunMode::Production);
 
-            jail.set_env("MUXA_ENV", "dev");
-            let fig = crate::config::load_figment();
+            jail.set_env("APP_ENV", "dev");
+            let fig = crate::config::load_figment("app");
             assert_eq!(RunMode::from_figment(&fig), RunMode::Development);
             Ok(())
         });
@@ -154,7 +154,7 @@ mod tests {
     )]
     fn figment_without_env_falls_back_to_build_profile() {
         figment::Jail::expect_with(|_jail| {
-            let fig = crate::config::load_figment();
+            let fig = crate::config::load_figment("app");
             assert_eq!(RunMode::from_figment(&fig), RunMode::from_build_profile());
             Ok(())
         });

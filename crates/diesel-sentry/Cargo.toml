@@ -14,5 +14,10 @@ repository.workspace = true
 diesel  = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# The backend types only (no libpq): enough to render a real `debug_query`.
+diesel             = { workspace = true, features = ["postgres_backend"] }
+tracing-subscriber = { workspace = true, features = ["registry", "std"] }
+
 [lints]
 workspace = true

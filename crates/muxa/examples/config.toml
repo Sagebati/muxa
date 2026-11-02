@@ -1,5 +1,5 @@
 # muxa example app — single-file configuration.
-# Override any value via env var, e.g. MUXA_WEB__PORT=8080.
+# Override any value via env var, e.g. HELLO_WEB__PORT=8080.
 #
 # Tracing verbosity is controlled via `RUST_LOG` (default: `info`).
 

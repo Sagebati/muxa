@@ -81,15 +81,20 @@ fn level_filter() -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
-/// `true` if `target` starts with one of the `excluded` prefixes — the same
-/// matching as a `RUST_LOG` target directive (`hyper` also covers
-/// `hyper::client` and `hyper_util`).
+/// `true` if `target` belongs to one of the `excluded` crates.
 fn is_excluded(excluded: &Excluded, target: &str) -> bool {
-    excluded.read().is_ok_and(|excluded| {
-        excluded
-            .iter()
-            .any(|prefix| target.starts_with(prefix.as_str()))
-    })
+    excluded
+        .read()
+        .is_ok_and(|excluded| excluded.iter().any(|krate| in_crate(target, krate)))
+}
+
+/// `true` if `target` is `krate` itself or one of its modules: `hyper` covers
+/// `hyper` and `hyper::client`, but not `hyper_util` — and `tower` doesn't
+/// swallow `tower_http`, whose request spans are what an exporter wants most.
+fn in_crate(target: &str, krate: &str) -> bool {
+    target
+        .strip_prefix(krate)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
 }
 
 /// The filter in front of every plugin layer: the `RUST_LOG` levels (so the
@@ -198,10 +203,10 @@ impl TelemetryRegistry {
         }
     }
 
-    /// Hide events and spans whose target starts with one of these prefixes
-    /// from every plugin layer. They still reach the `fmt` output. Matching is
-    /// by prefix, like a `RUST_LOG` target directive: `"hyper"` also covers
-    /// `hyper::client` and `hyper_util`.
+    /// Hide events and spans of these crates from every plugin layer. They
+    /// still reach the `fmt` output. A target matches a crate when it is the
+    /// crate or one of its modules: `"hyper"` covers `hyper::client`, but not
+    /// `hyper_util` — name each crate on the path.
     ///
     /// For a plugin whose layer exports over the network: name the crates on
     /// its export path (its HTTP/gRPC client, the exporter SDK), so the layer
@@ -214,9 +219,9 @@ impl TelemetryRegistry {
             let Ok(mut excluded) = slot.excluded.write() else {
                 return;
             };
-            for target in targets {
+            for &target in targets {
                 if !excluded.iter().any(|known| known == target) {
-                    excluded.push((*target).to_owned());
+                    excluded.push(target.to_owned());
                 }
             }
         }

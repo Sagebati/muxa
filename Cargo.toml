@@ -10,6 +10,7 @@ members = [
     "crates/muxa-otel",
     "crates/muxa-sentry",
     "crates/muxa-openapi",
+    "crates/muxa-auth",
     "crates/diesel-sentry",
     "crates/muxa",
 ]
@@ -64,6 +65,7 @@ muxa-pgmq   = { path = "crates/muxa-pgmq",   version = "0.1.0", default-features
 muxa-otel   = { path = "crates/muxa-otel",   version = "0.1.0", default-features = false }
 muxa-sentry = { path = "crates/muxa-sentry", version = "0.1.0", default-features = false }
 muxa-openapi = { path = "crates/muxa-openapi", version = "0.1.0", default-features = false }
+muxa-auth   = { path = "crates/muxa-auth",   version = "0.1.0", default-features = false }
 # Framework-agnostic (no muxa dep); the diesel plugin's `sentry` feature wraps it.
 diesel-sentry = { path = "crates/diesel-sentry", version = "0.1.0" }
 
@@ -86,30 +88,34 @@ http        = "1"
 # tower_governor builds against so its middleware types unify.
 tower_governor = "0.8"
 governor = "0.10"
+# Static files embedded at compile time, served from memory; muxa-web's `spa`
+# feature. 2.x is the axum 0.8 line.
+memory-serve = "2.4"
 
 # Database
 # Bare minimum sqlx pin — the database driver (`postgres` / `sqlite` / `mysql`),
 # `tls-*`, and column-type adapters are opted in via `muxa-sqlx`'s own Cargo
 # features (and unioned across the dep graph by cargo).
-sqlx         = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+sqlx         = { version = "0.9", default-features = false, features = ["runtime-tokio"] }
 diesel       = { version = "2", default-features = false }
-# diesel-async pinned to 0.9 to match the pgmq fork's diesel-async dep. Bump
-# in lockstep when the fork upgrades. Native-async only — diesel-async
-# supports Postgres and MySQL but not SQLite, so muxa-diesel is
+# diesel-async 0.9 — must stay on the same line pgmq builds its diesel-async
+# `Queue` impl against (0.9.0 today); bump the two together. Native-async only —
+# diesel-async supports Postgres and MySQL but not SQLite, so muxa-diesel is
 # Postgres/MySQL only.
 diesel-async = { version = "0.9", default-features = false, features = ["deadpool"] }
 # Sync migration harness; muxa-diesel runs it over diesel-async's
 # AsyncConnectionWrapper. Tracks diesel's 2.x line.
 diesel_migrations = { version = "2", default-features = false }
 
-# Postgres message queue — Sagebati fork that abstracts over driver pools via
-# Cargo features (sqlx, tokio-postgres, diesel-async, diesel-sync) instead of
-# hard-coding sqlx like upstream.
-# Pinned to a known-good commit: branch `main` has drifted to require
-# diesel-async ^0.5 (conflicts with muxa-diesel's ^0.9). This rev (0.34.0-alpha)
-# tracks diesel-async 0.9 — the same commit goban-analyser/katago-ws uses — so
-# the muxa workspace builds & lints standalone. Bump in lockstep with the fork.
-pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "e243a26a60a0c3a43eefca2051156556715e875e", default-features = false }
+# Postgres message queue. Upstream pgmq (0.34.0-alpha.7; sqlx 0.9, diesel-async
+# 0.9) has the diesel-async `Queue` impl, but its SQL-only installer is still
+# hard-wired to `sqlx::Pool<Postgres>` and `install-sql` drags sqlx in. The
+# `install-only` branch of the Sagebati fork is upstream `main` plus one scoped
+# patch: `pgmq::install::diesel_async::*` (installer over a borrowed
+# `AsyncPgConnection`) and `install-sql` without the implied `sqlx`. Nothing
+# else differs. To bump: rebase that branch onto upstream, update `rev` here
+# and in goban-analyser/katago-ws (which pins the same rev).
+pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "1ad05960c924c26a3c5d2269017ac10164482404", default-features = false }
 
 # Config
 figment     = { version = "0.10", features = ["toml", "env"] }
@@ -153,10 +159,25 @@ tracing-opentelemetry = "0.33"
 # tracing-opentelemetry span bridge). Tracks the opentelemetry 0.32 line.
 opentelemetry-appender-tracing = { version = "0.32", default-features = false }
 
-# Auth: deferred. The project is sessionless for now; muxa-auth /
-# axum-login / tower-sessions will return when there's a concrete need
-# (e.g. once we land token-based auth that doesn't require server-side
-# session storage).
+# Auth (muxa-auth). Cookie sessions over tower-sessions, login state via
+# axum-login, sign-in with any OAuth2 or OpenID Connect provider via the
+# ramosbugs oauth2/openidconnect crates.
+# - axum-login 0.18 builds against tower-sessions 0.14, so both stay on that
+#   line until axum-login moves; bump them together.
+# - oauth2/openidconnect go in without their default `reqwest` feature (it's
+#   reqwest 0.12): muxa-auth hands them a small client over reqwest 0.13, the
+#   line the rest of the workspace (sentry, otel) is on.
+axum-login     = "0.18"
+tower-sessions = { version = "0.14", default-features = false, features = ["axum-core"] }
+oauth2         = { version = "5", default-features = false }
+openidconnect  = { version = "4", default-features = false }
+reqwest        = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+password-auth  = "1"
+bcrypt         = "0.19"
+subtle         = "2"
+time           = "0.3"
+async-trait    = "0.1"
+url            = "2"
 
 # Sentry (error tracking + performance monitoring). rustls TLS for portability.
 sentry         = { version = "0.48", default-features = false, features = ["backtrace", "contexts", "panic", "release-health", "debug-images", "reqwest", "rustls"] }

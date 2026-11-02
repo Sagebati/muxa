@@ -45,7 +45,7 @@ pub trait PgBackend: Send + Sync + 'static {
 /// usually let it be inferred via `<_>`.
 #[diagnostic::on_unimplemented(
     message = "no Postgres pool available for backend `{B}` in the app state",
-    label = "add the matching pool plugin (e.g. SqlxPlugin or DieselPlugin) before this plugin in the App::default()...with_plugin() chain"
+    label = "add the matching pool plugin (e.g. SqlxPlugin or DieselPlugin) before this plugin in the muxa::app!()...with_plugin() chain"
 )]
 pub trait HasPgExecutorFor<B: PgBackend, Idx = Here> {
     /// Borrow the pool for backend `B`.

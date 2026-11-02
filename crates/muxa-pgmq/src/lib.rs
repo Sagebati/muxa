@@ -1,15 +1,18 @@
 //! muxa-pgmq — `PgmqPlugin<B, Idx>` generic over a `PgBackend`, backed by
-//! the [Sagebati/pgmq](https://github.com/Sagebati/pgmq) fork that abstracts
-//! over driver pools through Cargo features.
+//! `pgmq` (the `install-only` branch of the
+//! [Sagebati/pgmq](https://github.com/Sagebati/pgmq) fork: upstream plus a
+//! diesel-async SQL-only installer).
 //!
 //! `PgmqPlugin` is **installation-only** (`type Output = ()`): it provisions
 //! pgmq at startup and adds nothing to the application state. Its `build` step:
 //!
 //! 1. Borrows the matching pool from application state via the
 //!    `HasPgExecutorFor<B, _>` capability.
-//! 2. Calls `pgmq::install::{driver}::install_sql_from_embedded(&pool)` to
-//!    ensure the pgmq SQL extension and migration tables exist (idempotent).
-//! 3. Acquires a connection and calls `PGMQueueExt::create(queue)` for each
+//! 2. Runs pgmq's embedded SQL installer for the driver
+//!    (`pgmq::install::install_sql_from_embedded` for sqlx,
+//!    `pgmq::install::diesel_async::install_sql_from_embedded` for
+//!    diesel-async) so the pgmq schema and migration table exist (idempotent).
+//! 3. Acquires a connection and calls `Queue::create(queue)` for each
 //!    declared queue name.
 //!
 //! Queue operations (`send`/`read`/`archive`/…) are pgmq's `Queue` trait
@@ -31,7 +34,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> muxa::Result<()> {
-//!     App::default()
+//!     muxa::app!()
 //!         .with_plugin(SqlxPlugin::default()).await?
 //!         .with_plugin(PgmqPlugin::<SqlxBackend, _>::new().queues(["jobs"])).await?
 //!         // ... add WebPlugin last
@@ -42,10 +45,10 @@
 //! ## Features
 //!
 //! - `sqlx` — enables the `Plugin` impl for `PgmqPlugin<SqlxBackend, _>`.
-//!   Pulls in `muxa-sqlx` and the pgmq fork's `sqlx` adapter.
+//!   Pulls in `muxa-sqlx` and pgmq's `sqlx` adapter.
 //! - `diesel-async` — enables the `Plugin` impl for
-//!   `PgmqPlugin<DieselBackend, _>`. Pulls in `muxa-diesel` and the pgmq
-//!   fork's `diesel-async` adapter.
+//!   `PgmqPlugin<DieselBackend, _>`. Pulls in `muxa-diesel` and pgmq's
+//!   `diesel-async` adapter.
 //!
 //! The `muxa` facade auto-activates these when its own `sqlx` / `diesel`
 //! feature is enabled.
@@ -112,7 +115,8 @@ impl<B: PgBackend, Idx> Default for PgmqPlugin<B, Idx> {
 #[doc(hidden)]
 pub fn merge_queues(mut from_plugin: Vec<String>, from_config: Vec<String>) -> Vec<String> {
     from_plugin.extend(from_config);
-    from_plugin.sort();
+    // Unstable is fine (equal names are identical) and needs no scratch buffer.
+    from_plugin.sort_unstable();
     from_plugin.dedup();
     from_plugin
 }
@@ -132,7 +136,7 @@ fn box_pgmq_err(err: pgmq::PgmqError) -> muxa_core::Error {
 mod sqlx_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_sqlx::SqlxBackend;
-    use pgmq::Queue as _;
+    use pgmq::queue::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<SqlxBackend, Idx>
     where
@@ -152,7 +156,7 @@ mod sqlx_impl {
                 "muxa-pgmq[sqlx]: installing pgmq and ensuring queues"
             );
 
-            pgmq::install::sqlx::install_sql_from_embedded(&pool.0)
+            pgmq::install::install_sql_from_embedded(&pool.0)
                 .await
                 .map_err(super::box_pgmq_err)?;
 
@@ -179,7 +183,7 @@ mod sqlx_impl {
 mod diesel_async_impl {
     use muxa_core::{BuildCtx, Error, HasPgExecutorFor, Plugin, Result, State};
     use muxa_diesel::DieselBackend;
-    use pgmq::Queue as _;
+    use pgmq::queue::Queue as _;
 
     impl<S, Idx> Plugin<S> for super::PgmqPlugin<DieselBackend, Idx>
     where
@@ -199,15 +203,16 @@ mod diesel_async_impl {
                 "muxa-pgmq[diesel-async]: installing pgmq and ensuring queues"
             );
 
-            pgmq::install::diesel_async::install_sql_from_embedded(&pool.0)
-                .await
-                .map_err(super::box_pgmq_err)?;
-
             let mut conn = pool
                 .0
                 .get()
                 .await
                 .map_err(|err| Error::other(format!("diesel get: {err}")))?;
+
+            pgmq::install::diesel_async::install_sql_from_embedded(&mut conn)
+                .await
+                .map_err(super::box_pgmq_err)?;
+
             for queue in &queues {
                 // `Queue` is implemented for `&mut AsyncPgConnection` and its
                 // methods take `self`, so reborrow per call.

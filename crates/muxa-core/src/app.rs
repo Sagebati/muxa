@@ -1,11 +1,9 @@
 //! `App` and `AppBuilder` — the entry point and plugin-chain accumulator.
 
-use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use figment::Figment;
-use tracing::Instrument as _;
+use tokio::task::JoinHandle;
 
 use crate::config::Sections;
 use crate::ctx::BuildCtx;
@@ -21,8 +19,8 @@ const TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// Entry point — a friendly alias for an empty [`AppBuilder`].
 ///
-/// Construct with `App::default()` (uses the default figment lookup),
-/// `App::with_config_file(path)`, or `App::with_figment(fig)`.
+/// Construct with [`crate::app!`] (configuration named after the calling
+/// crate), [`App::named`], or [`App::with_figment`].
 pub type App = AppBuilder<HNil>;
 
 /// Application builder.
@@ -44,40 +42,14 @@ impl AppBuilder<HNil> {
         }
     }
 
-    /// Create an empty builder loading config from an explicit file path.
-    /// Useful when you want to ship `muxa.toml` next to a binary, in a
-    /// system path, etc.
-    pub fn with_config_file<P: AsRef<Path>>(path: P) -> Self {
-        Self::with_figment(crate::config::load_figment_from(
-            path.as_ref().to_path_buf(),
-        ))
-    }
-
-    /// Like [`AppBuilder::default`], but reads env vars with a custom prefix
-    /// instead of `MUXA_`. The bootstrap config-path var becomes
-    /// `{prefix}CONFIG` (e.g. prefix `MYAPP_` → `$MYAPP_CONFIG`). The prefix
-    /// should include its trailing separator.
-    pub fn with_env_prefix(prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_with_prefix(prefix))
-    }
-
-    /// Like [`AppBuilder::with_config_file`], but reads env vars with a custom
-    /// prefix instead of `MUXA_`. The prefix should include its trailing
-    /// separator.
-    pub fn with_config_file_and_env_prefix<P: AsRef<Path>>(path: P, prefix: &str) -> Self {
-        Self::with_figment(crate::config::load_figment_from_with_prefix(
-            path.as_ref().to_path_buf(),
-            prefix,
-        ))
-    }
-}
-
-impl Default for AppBuilder<HNil> {
-    /// Equivalent to `AppBuilder::with_figment(load_figment())` — uses the
-    /// default figment lookup (`./muxa.toml`, overridable via
-    /// `MUXA_CONFIG=path/to/file.toml`, merged with `MUXA_*` env vars).
-    fn default() -> Self {
-        Self::with_figment(crate::config::load_figment())
+    /// Create an empty builder whose configuration is named after the app:
+    /// `config.toml` (or `$<PREFIX>CONFIG`) merged with `<PREFIX>*` env vars,
+    /// where `"katago-ws"` gives the prefix `KATAGO_WS_`. Usually called
+    /// through [`crate::app!`], which passes the calling crate's package name.
+    ///
+    /// See [`crate::config::load_figment`].
+    pub fn named(app_name: &str) -> Self {
+        Self::with_figment(crate::config::load_figment(app_name))
     }
 }
 
@@ -146,24 +118,12 @@ impl<S: State> AppBuilder<S> {
             )
         })?;
 
-        // Spawn background tasks.
         let shutdown = self.ctx.shutdown.clone();
-        let mut tasks = Vec::new();
-        for (name, task) in self.ctx.tasks.drain() {
-            let st = shutdown.child_token();
-            let handle = tokio::spawn(
-                async move {
-                    tracing::info!(task = name, "spawning background task");
-                    task(st).await;
-                }
-                .instrument(tracing::info_span!("muxa.task", name = name)),
-            );
-            tasks.push((name, handle));
-        }
+        let tasks = self.ctx.tasks.spawn_all(&shutdown);
 
         // The frozen state is reserved for future use (e.g. `Plugin::shutdown`
         // hooks) — for v0 we just keep it alive until run() returns.
-        let _state = Arc::new(self.state);
+        let _state = self.state;
 
         let router = self.ctx.router.compose();
         let served = serve(router).await;
@@ -177,34 +137,49 @@ impl<S: State> AppBuilder<S> {
     }
 }
 
+/// What became of the background tasks at shutdown, by name.
+#[derive(Debug, Default)]
+struct TaskOutcomes {
+    /// Tasks that panicked (or were cancelled).
+    failed: Vec<&'static str>,
+    /// Tasks still running when the grace period ran out.
+    abandoned: Vec<&'static str>,
+}
+
 /// Wait for the background tasks to return, for at most
-/// [`TASK_SHUTDOWN_GRACE`]. Logs tasks that panicked or didn't stop in time.
-async fn join_tasks(tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)>) {
-    if tasks.is_empty() {
-        return;
-    }
-    let (names, handles): (Vec<_>, Vec<_>) = tasks.into_iter().unzip();
-    let joined = futures::future::join_all(handles);
-    match tokio::time::timeout(TASK_SHUTDOWN_GRACE, joined).await {
-        Ok(results) => {
-            for (name, result) in names.iter().zip(results) {
-                if let Err(err) = result {
-                    tracing::error!(task = name, %err, "background task failed");
-                }
+/// [`TASK_SHUTDOWN_GRACE`] in all. Logs tasks that panicked or didn't stop in
+/// time.
+async fn join_tasks(tasks: Vec<(&'static str, JoinHandle<()>)>) -> TaskOutcomes {
+    // One deadline for all: the tasks run concurrently, so awaiting them in turn
+    // still waits at most the grace period overall. A task that has already
+    // returned yields its result even past the deadline (the handle is polled
+    // before the timer), so its panic is reported rather than lost.
+    let deadline = tokio::time::Instant::now() + TASK_SHUTDOWN_GRACE;
+    let mut outcomes = TaskOutcomes::default();
+    for (name, handle) in tasks {
+        match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!(task = name, %err, "background task failed");
+                outcomes.failed.push(name);
             }
-        }
-        Err(_elapsed) => {
-            tracing::warn!(
-                tasks = ?names,
-                grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
-                "background tasks still running after the shutdown grace period; abandoning them"
-            );
+            Err(_elapsed) => outcomes.abandoned.push(name),
         }
     }
+    if !outcomes.abandoned.is_empty() {
+        tracing::warn!(
+            tasks = ?outcomes.abandoned,
+            grace_secs = TASK_SHUTDOWN_GRACE.as_secs(),
+            "background tasks still running after the shutdown grace period; abandoning them"
+        );
+    }
+    outcomes
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::state::HCons;
     use figment::providers::Format as _;
@@ -273,6 +248,23 @@ mod tests {
         assert!(flushed.load(std::sync::atomic::Ordering::SeqCst));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_reports_failed_and_abandoned_tasks() {
+        let hangs = tokio::spawn(std::future::pending::<()>());
+        let fails = tokio::spawn(async { panic!("flush failed") });
+        let returns = tokio::spawn(async {});
+        let outcomes = join_tasks(vec![
+            ("hangs", hangs),
+            ("fails", fails),
+            ("returns", returns),
+        ])
+        .await;
+        // `fails` is awaited after the deadline passed waiting on `hangs`, yet
+        // its panic is still reported.
+        assert_eq!(outcomes.failed, ["fails"]);
+        assert_eq!(outcomes.abandoned, ["hangs"]);
+    }
+
     #[tokio::test]
     async fn run_without_a_serving_plugin_is_an_error() {
         let err = AppBuilder::<HNil>::with_figment(Figment::new())
@@ -337,5 +329,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(app.state().head, 7);
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Jail::expect_with's closure must return Result<_, figment::Error>"
+    )]
+    fn default_read_config_applies_env_fallbacks() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Default, Debug)]
+        struct MyCfg {
+            n: u32,
+        }
+
+        struct UsesCfg;
+        impl<S: State> Plugin<S> for UsesCfg {
+            type Output = u32;
+            type Config = MyCfg;
+            const CONFIG_PREFIX: &'static str = "cfg";
+            const ENV_FALLBACKS: &'static [crate::EnvFallback] = &[crate::EnvFallback {
+                var: "STANDARD_N",
+                key: "n",
+            }];
+
+            async fn build(self, cfg: MyCfg, _s: &S, _c: &mut BuildCtx) -> Result<u32> {
+                Ok(cfg.n)
+            }
+        }
+
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("STANDARD_N", "5");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let app = runtime
+                .block_on(AppBuilder::<HNil>::with_figment(Figment::new()).with_plugin(UsesCfg))
+                .unwrap();
+            assert_eq!(app.state().head, 5);
+            Ok(())
+        });
     }
 }

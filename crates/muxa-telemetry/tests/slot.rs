@@ -41,18 +41,18 @@ fn plugin_layers_share_one_slot() {
     assert_eq!(seen.load(Ordering::SeqCst), 1);
     assert_eq!(seen_by_new.load(Ordering::SeqCst), 1);
 
-    // Excluded targets never reach plugin layers. Matching is by prefix.
+    // Excluded crates never reach plugin layers: the crate and its modules.
     second.exclude_targets(&["noisy"]);
     tracing::info!(target: "noisy", "hidden");
     tracing::info!(target: "noisy::transport", "hidden");
-    tracing::info!(target: "noisy_util", "hidden: same prefix");
+    tracing::info!(target: "noisy_util", "a different crate: still seen");
     tracing::info!(target: "quiet", "a different target: still seen");
-    assert_eq!(seen_by_new.load(Ordering::SeqCst), 2);
+    assert_eq!(seen_by_new.load(Ordering::SeqCst), 3);
 
     // A detached registry does nothing.
     let detached = TelemetryRegistry::external();
     assert!(!detached.is_installed());
     detached.add_layer(Counting(Arc::new(AtomicUsize::new(0))));
     tracing::info!("still one layer");
-    assert_eq!(seen_by_new.load(Ordering::SeqCst), 3);
+    assert_eq!(seen_by_new.load(Ordering::SeqCst), 4);
 }

@@ -27,12 +27,14 @@ logs        = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry/logs
 
 # OTLP exporters. Pick one transport: tonic/grpc or http.
 otlp-tonic  = ["traces",
+               "dep:tokio",
                "dep:opentelemetry-otlp",
                "opentelemetry-otlp/grpc-tonic",
                "opentelemetry-otlp/trace",
                "opentelemetry-otlp/metrics",
                "opentelemetry-otlp/logs"]
 otlp-http   = ["traces",
+               "dep:tokio",
                "dep:opentelemetry-otlp",
                "opentelemetry-otlp/http-proto",
                "opentelemetry-otlp/reqwest-client",
@@ -51,11 +53,16 @@ serde                 = { workspace = true }
 bon                   = { workspace = true }
 
 tower-http            = { workspace = true, optional = true }
+# Provider shutdown runs on the blocking pool; only with an OTLP transport.
+tokio                 = { workspace = true, optional = true }
 opentelemetry         = { workspace = true, optional = true }
 opentelemetry_sdk     = { workspace = true, optional = true }
 opentelemetry-otlp    = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 opentelemetry-appender-tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true
