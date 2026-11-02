@@ -52,6 +52,7 @@ muxa-core    = { workspace = true }
 dupe         = { workspace = true }
 diesel       = { workspace = true }
 diesel-async = { workspace = true }
+deadpool     = { workspace = true }
 diesel_migrations = { workspace = true, optional = true }
 diesel-sentry = { workspace = true, optional = true }
 # `spawn_blocking` for running the (sync) migration harness off the executor.

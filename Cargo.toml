@@ -103,6 +103,9 @@ diesel       = { version = "2", default-features = false }
 # diesel-async supports Postgres and MySQL but not SQLite, so muxa-diesel is
 # Postgres/MySQL only.
 diesel-async = { version = "0.9", default-features = false, features = ["deadpool"] }
+# diesel-async's pool. Named only to turn on `rt_tokio_1`, which deadpool's
+# wait/create timeouts need; must stay on the line diesel-async re-exports.
+deadpool     = { version = "0.13", default-features = false, features = ["managed", "rt_tokio_1"] }
 # Sync migration harness; muxa-diesel runs it over diesel-async's
 # AsyncConnectionWrapper. Tracks diesel's 2.x line.
 diesel_migrations = { version = "2", default-features = false }

@@ -38,10 +38,12 @@ async fn main() -> muxa::Result<()> {
 | Key | Default | |
 |---|---|---|
 | `url` | none, required | Postgres connection URL. Startup fails if it is empty |
-| `max_connections` | `10` | |
+| `max_connections` | 4 per CPU, 4–32 | `muxa_core::host::db_pool_size()` |
 | `min_connections` | `0` | |
 
 `url` is held as a `SecretString`, so a `Debug` print of the config does not reveal it.
+
+"CPU" means a CPU the process may use (`muxa_core::host::cpus()`), which takes a container's CPU limit into account. The same binary gets a small pool in a 1-CPU container and a larger one on a big host. Set `max_connections` to pin it.
 
 ## SQLite
 
@@ -53,7 +55,7 @@ async fn main() -> muxa::Result<()> {
 |---|---|---|
 | `url` | `"sqlite::memory:"` | any sqlx SQLite URL, e.g. `sqlite:./data.db` |
 | `create_if_missing` | `true` | create the database file if it does not exist |
-| `max_connections` | `5` | |
+| `max_connections` | 1 per CPU, 2–8 | SQLite has one writer, so more connections only add readers |
 
 The default is an in-memory database. It exists only while at least one pooled connection is open, and sqlx closes idle connections after 10 minutes and recycles them after 30, so the data can disappear while the app is still running. It suits tests and examples; use a file for anything you need to keep.
 

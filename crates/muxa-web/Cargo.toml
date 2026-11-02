@@ -35,7 +35,8 @@ muxa-core   = { workspace = true }
 aide         = { workspace = true, optional = true }
 muxa-openapi = { workspace = true, optional = true }
 # Pull `tokio` without `signal` by default; the feature adds it back.
-tokio       = { workspace = true }
+# `net` for `TcpSocket` (the listener is bound with a tunable backlog).
+tokio       = { workspace = true, features = ["net"] }
 tokio-util  = { workspace = true }
 futures     = { workspace = true }
 axum        = { workspace = true }

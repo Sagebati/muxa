@@ -59,6 +59,8 @@ The `&_` in form 3 is required. `WebPlugin::new(move |_state| router)` does not 
 | `host` | `"0.0.0.0"` | bind host: an IPv4 or IPv6 literal (IPv6 may be bracketed, `"[::1]"`) or a hostname such as `"localhost"`. In an env var write IPv6 bare (`<APP>_WEB__HOST=::1`): figment reads an unquoted `[::1]` as a list |
 | `port` | `3000` | `0` lets the OS pick |
 | `banner` | `true` | print the launch banner to stderr |
+| `backlog` | the host's ceiling | listen backlog: `net.core.somaxconn` on Linux, `1024` elsewhere |
+| `tcp_nodelay` | `true` | set `TCP_NODELAY` on accepted connections |
 
 The banner shows the bound URL and the mounted route prefixes. It does not print configuration.
 

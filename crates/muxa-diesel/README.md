@@ -48,7 +48,7 @@ The pool is built lazily: no connection is opened until the first `pool.get()`, 
 This crate does not re-export diesel. Add these to your own `Cargo.toml` for the schema, derives and query execution:
 
 ```toml
-diesel       = { version = "2", default-features = false, features = ["postgres"] }
+diesel       = { version = "2", default-features = false, features = ["postgres_backend"] }
 diesel-async = { version = "0.9", default-features = false, features = ["postgres", "deadpool"] }
 ```
 
@@ -61,9 +61,14 @@ A complete, runnable version is the [`diesel_widgets`](../muxa/examples/diesel_w
 | Key | Default | |
 |---|---|---|
 | `url` | none, required | Postgres connection URL. Startup fails if it is empty |
-| `max_connections` | `10` | pool size |
+| `max_connections` | 4 per CPU, 4–32 | pool size, from `muxa_core::host::db_pool_size()` |
+| `acquire_timeout_secs` | `30` | how long `pool.get()` may wait for a free slot or a new connection; `0` waits forever |
 
 `url` is held as a `SecretString`, so a `Debug` print of the config does not reveal it.
+
+"CPU" means a CPU the process may use (`muxa_core::host::cpus()`), which takes a container's CPU limit into account. Set `max_connections` to pin the size.
+
+Use diesel's `postgres_backend` feature, not `postgres`. `postgres` links libpq for diesel's sync connections, which diesel-async never uses, and the binary then needs libpq installed wherever it runs.
 
 ## Migrations
 
