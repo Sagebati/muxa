@@ -59,6 +59,10 @@ diesel-network      = ["muxa-diesel?/network"]
 
 # PGMQ.
 pgmq                = ["dep:muxa-pgmq"]
+# Statically link a bundled libpq for pgmq's diesel backend (`pgmq` + `diesel`),
+# which otherwise links the system libpq. Lets that combination build a
+# standalone binary. No-op without `pgmq`.
+pgmq-bundled-libpq  = ["muxa-pgmq?/bundled-libpq"]
 
 # OpenTelemetry / observability. `otel` carries muxa-otel's own default
 # (`http-layer`: the tower-http TraceLayer), as `web` does for graceful-shutdown.
@@ -116,8 +120,9 @@ axum  = { workspace = true }
 serde = { workspace = true }
 # `diesel_widgets` example: schema/derives + async query execution. The
 # `embed_migrations!` macro expands to absolute `diesel_migrations::` paths,
-# so that crate must be in scope at the call site.
-diesel            = { workspace = true, features = ["postgres"] }
+# so that crate must be in scope at the call site. `postgres_backend` (not
+# `postgres`) so the example doesn't link libpq.
+diesel            = { workspace = true, features = ["postgres_backend"] }
 diesel-async      = { workspace = true, features = ["postgres", "deadpool"] }
 diesel_migrations = { workspace = true }
 # `diesel_widgets` also emits its own span (tracing) + a request counter

@@ -117,6 +117,13 @@ diesel_migrations = { version = "2", default-features = false }
 # and in goban-analyser/katago-ws (which pins the same rev).
 pgmq         = { git = "https://github.com/Sagebati/pgmq", rev = "1ad05960c924c26a3c5d2269017ac10164482404", default-features = false }
 
+# libpq bindings — never called by muxa (diesel-async talks to Postgres over
+# tokio-postgres), but pgmq's `diesel` feature enables `diesel/postgres`, which
+# links libpq. Named here only so `muxa-pgmq/bundled-libpq` can switch it to the
+# statically built, TLS-less copy (`bundled_without_openssl`) for standalone
+# binaries. Must stay on the line diesel builds against.
+pq-sys       = { version = "0.7", default-features = false }
+
 # Config
 figment     = { version = "0.10", features = ["toml", "env"] }
 toml        = "0.8"

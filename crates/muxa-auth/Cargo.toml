@@ -47,7 +47,9 @@ openidconnect  = { workspace = true, optional = true }
 password-auth  = { workspace = true, optional = true }
 bcrypt         = { workspace = true, optional = true }
 muxa-diesel    = { workspace = true, optional = true, features = ["postgres"] }
-diesel         = { workspace = true, optional = true, features = ["postgres", "time", "serde_json"] }
+# `postgres_backend`, not `postgres`: queries run on diesel-async, so libpq
+# (`pq-sys`) is never linked.
+diesel         = { workspace = true, optional = true, features = ["postgres_backend", "time", "serde_json"] }
 diesel-async   = { workspace = true, optional = true, features = ["postgres"] }
 async-trait    = { workspace = true, optional = true }
 aide           = { workspace = true, optional = true }
