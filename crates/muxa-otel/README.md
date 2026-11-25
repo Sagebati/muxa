@@ -45,7 +45,7 @@ If any is missing, the plugin still builds and logs `initialized (export disable
 | Logs | `logs` | every `tracing` event (`info!`, `warn!`, …) |
 | Metrics | `metrics` | instruments you create from the global meter |
 
-Traces and logs need no code beyond the `tracing` macros you already use. For metrics, the plugin installs the global meter provider and you record against it with the `opentelemetry` crate (same version line, 0.32):
+Traces and logs need no code beyond the `tracing` macros you already use. For metrics, the plugin installs the global meter provider and you record against it with the `opentelemetry` crate (same version line, 0.33):
 
 ```rust
 use std::sync::LazyLock;

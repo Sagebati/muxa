@@ -9,9 +9,9 @@
 //!    capture + optional transactions for performance monitoring) on the
 //!    router. Transactions are named after the matched route template
 //!    (`GET /jobs/{id}`), so Sentry groups them per endpoint.
-//! 3. **With the `tracing-bridge` feature**: push `sentry-tracing::layer()`
-//!    onto the shared tracing subscriber so `tracing` events and
-//!    spans flow into Sentry as breadcrumbs / events / transactions.
+//! 3. **With the `tracing-bridge` feature**: push a `TracingBridge` layer
+//!    onto the shared tracing subscriber so `tracing` spans and events flow
+//!    into Sentry as transactions / error events / breadcrumbs / logs.
 //!
 //! Database traces, metrics, and logs that arrive through `tracing`
 //! (e.g. sqlx's per-query spans when its `tracing` feature is on) are
@@ -37,7 +37,6 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use bon::Builder;
 use muxa_core::{BuildCtx, EnvFallback, Error, Plugin, Result, RunMode, State};
@@ -232,10 +231,9 @@ impl<S: State> Plugin<S> for SentryPlugin {
             .unwrap_or_else(|| default_traces_sample_rate(mode));
 
         // Structured logs: ship INFO+ tracing events to Sentry's Logs product.
-        // `enable_logs` is a no-op unless the `logs` cargo feature is compiled,
-        // which only the `tracing-bridge` feature pulls — so gate on it to keep
-        // the startup log honest. The sentry-tracing default filter already maps
-        // INFO/WARN→Log and ERROR→Event|Log once that feature is active.
+        // They come from the tracing bridge's log layer, so they exist only
+        // with the `tracing-bridge` feature — gate on it to keep the startup
+        // log honest.
         let enable_logs = cfg.logs && cfg!(feature = "tracing-bridge");
 
         // Per-transaction rates: the built-in defaults, then the app's overrides.
@@ -245,22 +243,20 @@ impl<S: State> Plugin<S> for SentryPlugin {
             .map(|&(name, rate)| (name.to_owned(), rate))
             .collect();
         rates.extend(cfg.transaction_sample_rates);
-        let traces_sampler: Arc<sentry::TracesSampler> =
-            Arc::new(move |tx: &sentry::TransactionContext| {
-                sample_rate_for(&rates, traces_sample_rate, tx.name(), tx.sampled())
-            });
 
-        let options = sentry::ClientOptions {
-            dsn,
-            environment: Some(environment),
-            release: cfg.release.map(Cow::Owned),
-            traces_sample_rate,
-            traces_sampler: Some(traces_sampler),
-            attach_stacktrace: cfg.attach_stacktrace,
-            send_default_pii: cfg.send_default_pii,
-            enable_logs,
-            ..Default::default()
-        };
+        // The sampler covers the base rate too (`traces_sample_rate` is its
+        // fallback), so no separate fixed-rate strategy is set.
+        let mut options = sentry::ClientOptions::new()
+            .environment(environment)
+            .maybe_release(cfg.release)
+            .traces_sampler(move |tx: &sentry::TransactionContext| {
+                sample_rate_for(&rates, traces_sample_rate, tx.name(), tx.sampled())
+            })
+            .attach_stacktrace(cfg.attach_stacktrace)
+            .send_default_pii(cfg.send_default_pii);
+        // Assigned, not `.dsn(&str)`: that one panics on a bad DSN, and this
+        // one was already parsed (and failed the build) above.
+        options.dsn = dsn;
 
         let guard = sentry::init(options);
 
@@ -292,7 +288,7 @@ impl<S: State> Plugin<S> for SentryPlugin {
             // report its own reporting.
             ctx.telemetry
                 .exclude_targets(&["h2", "hyper", "hyper_util", "reqwest", "tower"]);
-            ctx.telemetry.add_layer(sentry_tracing::layer());
+            ctx.telemetry.add_layer(TracingBridge::new(enable_logs));
         }
 
         // Whether events are actually sent.
@@ -311,6 +307,99 @@ impl<S: State> Plugin<S> for SentryPlugin {
         }
 
         Ok(SentryHandle { _guard: guard })
+    }
+}
+
+/// The `tracing` → Sentry bridge: sentry-tracing's four layers behind one
+/// level routing, the one sentry-tracing's legacy combined layer had.
+///
+/// - `ERROR`/`WARN`/`INFO` spans → transactions and spans;
+/// - `ERROR` events → error events (Sentry issues);
+/// - `WARN`/`INFO` events → breadcrumbs, sent with the next error;
+/// - `ERROR`/`WARN`/`INFO` events → structured logs, when `[sentry].logs` is on.
+///
+/// The routing is done here rather than with a `with_filter` per layer:
+/// muxa-telemetry adds plugin layers to a reload slot after the subscriber is
+/// built, and a per-layer filter added that way never gets its `FilterId`.
+#[cfg(feature = "tracing-bridge")]
+pub struct TracingBridge {
+    spans: sentry_tracing::SpanLayer,
+    breadcrumbs: sentry_tracing::BreadcrumbLayer,
+    errors: sentry_tracing::ErrorLayer,
+    logs: Option<sentry_tracing::LogLayer>,
+}
+
+#[cfg(feature = "tracing-bridge")]
+impl TracingBridge {
+    /// The bridge; `logs` adds the structured-logs layer.
+    pub fn new(logs: bool) -> Self {
+        Self {
+            spans: sentry_tracing::SpanLayer::new(),
+            breadcrumbs: sentry_tracing::BreadcrumbLayer::new(),
+            errors: sentry_tracing::ErrorLayer::new(),
+            logs: logs.then(sentry_tracing::LogLayer::new),
+        }
+    }
+}
+
+#[cfg(feature = "tracing-bridge")]
+mod bridge {
+    use tracing::{Event, Level, Subscriber, span};
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::Context;
+    use tracing_subscriber::registry::LookupSpan;
+
+    use super::TracingBridge;
+
+    /// `INFO` or more severe (tracing orders levels by verbosity).
+    fn captured(level: Level) -> bool {
+        level <= Level::INFO
+    }
+
+    impl<S> Layer<S> for TracingBridge
+    where
+        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+            let level = *event.metadata().level();
+            if !captured(level) {
+                return;
+            }
+            // Breadcrumbs before errors, so an event that is both would be
+            // in its own error's trail (none is, with this routing).
+            if level == Level::ERROR {
+                self.errors.on_event(event, ctx.clone());
+            } else {
+                self.breadcrumbs.on_event(event, ctx.clone());
+            }
+            if let Some(logs) = &self.logs {
+                logs.on_event(event, ctx);
+            }
+        }
+
+        fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx: Context<'_, S>) {
+            // A span skipped here has no Sentry data, which the span layer's
+            // other hooks treat as "not mine".
+            if captured(*attrs.metadata().level()) {
+                self.spans.on_new_span(attrs, id, ctx);
+            }
+        }
+
+        fn on_enter(&self, id: &span::Id, ctx: Context<'_, S>) {
+            self.spans.on_enter(id, ctx);
+        }
+
+        fn on_exit(&self, id: &span::Id, ctx: Context<'_, S>) {
+            self.spans.on_exit(id, ctx);
+        }
+
+        fn on_close(&self, id: span::Id, ctx: Context<'_, S>) {
+            self.spans.on_close(id, ctx);
+        }
+
+        fn on_record(&self, id: &span::Id, values: &span::Record<'_>, ctx: Context<'_, S>) {
+            self.spans.on_record(id, values, ctx);
+        }
     }
 }
 
@@ -397,5 +486,58 @@ mod tests {
         }
         assert!(chain.contains("not a valid DSN"), "{chain}");
         assert!(!chain.contains("secret-key"), "DSN leaked: {chain}");
+    }
+
+    /// ERROR events become Sentry events carrying the INFO/WARN breadcrumbs
+    /// before them; DEBUG events are dropped.
+    #[cfg(feature = "tracing-bridge")]
+    #[test]
+    fn bridge_routes_events_by_level() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let subscriber = tracing_subscriber::registry().with(super::TracingBridge::new(false));
+        let events = tracing::subscriber::with_default(subscriber, || {
+            sentry::test::with_captured_events(|| {
+                tracing::debug!("too verbose");
+                tracing::info!("crumb one");
+                tracing::warn!("crumb two");
+                tracing::error!("boom");
+            })
+        });
+
+        assert_eq!(events.len(), 1, "only the ERROR event is an event");
+        let event = &events[0];
+        assert_eq!(event.message.as_deref(), Some("boom"));
+        let crumbs: Vec<_> = event
+            .breadcrumbs
+            .iter()
+            .filter_map(|crumb| crumb.message.as_deref())
+            .collect();
+        assert_eq!(crumbs, ["crumb one", "crumb two"]);
+    }
+
+    /// INFO spans become transactions; DEBUG spans don't.
+    #[cfg(feature = "tracing-bridge")]
+    #[test]
+    fn bridge_turns_info_spans_into_transactions() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let transactions = |make_span: fn() -> tracing::Span| {
+            let subscriber = tracing_subscriber::registry().with(super::TracingBridge::new(false));
+            let envelopes = tracing::subscriber::with_default(subscriber, || {
+                sentry::test::with_captured_envelopes_options(
+                    || drop(make_span().entered()),
+                    sentry::ClientOptions::new().traces_sample_rate(1.0),
+                )
+            });
+            envelopes
+                .iter()
+                .flat_map(sentry::Envelope::items)
+                .filter(|item| matches!(item, sentry::protocol::EnvelopeItem::Transaction(_)))
+                .count()
+        };
+
+        assert_eq!(transactions(|| tracing::info_span!("request")), 1);
+        assert_eq!(transactions(|| tracing::debug_span!("detail")), 0);
     }
 }

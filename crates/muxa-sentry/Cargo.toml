@@ -11,12 +11,13 @@ repository.workspace = true
 [features]
 default = []
 
-# Bridge `tracing` events to Sentry via `sentry-tracing`. The layer is
-# attached to the shared subscriber through `ctx.telemetry`. Pulls the
-# `logs` feature on both crates so INFO/WARN/ERROR events are also captured as
-# Sentry structured logs (gated at runtime by `[sentry].logs` + `enable_logs`).
+# Bridge `tracing` spans and events to Sentry via `sentry-tracing`. The layer
+# is attached to the shared subscriber through `ctx.telemetry`. Pulls the
+# `logs` feature on both crates so INFO/WARN/ERROR events can also be captured
+# as Sentry structured logs (gated at runtime by `[sentry].logs`).
 tracing-bridge = [
     "dep:sentry-tracing",
+    "dep:tracing-subscriber",
     "sentry/logs",
     "sentry-tracing/logs",
 ]
@@ -30,12 +31,16 @@ sentry         = { workspace = true }
 sentry-tower   = { workspace = true, features = ["axum-matched-path"] }
 sentry-tracing = { workspace = true, optional = true }
 tracing        = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
 bon            = { workspace = true }
 serde          = { workspace = true }
 secrecy        = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# `test`: an in-memory transport, to assert what the tracing bridge captures.
+sentry     = { workspace = true, features = ["test"] }
+tracing-subscriber = { workspace = true }
 figment    = { workspace = true }
 tokio      = { workspace = true, features = ["macros", "rt"] }
 

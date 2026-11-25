@@ -81,7 +81,7 @@ pin-project-lite = "0.2"
 # HTTP & middleware
 axum        = "0.8"
 tower       = { version = "0.5", features = ["util"] }
-tower-http  = { version = "0.6", features = ["trace"] }
+tower-http  = { version = "0.7", features = ["trace"] }
 http        = "1"
 # Per-IP rate limiting (GCRA) as a tower layer, used by muxa-web's `ratelimit`
 # feature. `governor` is the underlying limiter — pinned to the version
@@ -129,7 +129,7 @@ pq-sys       = { version = "0.7", default-features = false }
 
 # Config
 figment     = { version = "0.10", features = ["toml", "env"] }
-toml        = "0.8"
+toml        = "1"
 
 # OpenAPI — aide (alpha line: axum 0.8 + schemars 1.0). Exact-pinned so the
 # `OpenApi` type unifies across muxa-openapi and downstream binaries. muxa-openapi
@@ -159,30 +159,30 @@ thiserror   = "2"
 # Tracing & observability
 tracing             = "0.1"
 tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
-opentelemetry       = "0.32"
-opentelemetry_sdk   = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry       = "0.33"
+opentelemetry_sdk   = { version = "0.33", features = ["rt-tokio"] }
 # OTLP exporter transports are split into separate features in 0.32; the
 # `muxa-otel/otlp-tonic` and `muxa-otel/otlp-http` features pick one.
-opentelemetry-otlp  = { version = "0.32", default-features = false }
-tracing-opentelemetry = "0.33"
+opentelemetry-otlp  = { version = "0.33", default-features = false }
+tracing-opentelemetry = "0.34"
 # Bridges `tracing` events → OpenTelemetry logs (the logs analogue of the
-# tracing-opentelemetry span bridge). Tracks the opentelemetry 0.32 line.
-opentelemetry-appender-tracing = { version = "0.32", default-features = false }
+# tracing-opentelemetry span bridge). Tracks the opentelemetry 0.33 line.
+opentelemetry-appender-tracing = { version = "0.33", default-features = false }
 
 # Auth (muxa-auth). Cookie sessions over tower-sessions, login state via
 # axum-login, sign-in with any OAuth2 or OpenID Connect provider via the
 # ramosbugs oauth2/openidconnect crates.
-# - axum-login 0.18 builds against tower-sessions 0.14, so both stay on that
+# - axum-login 0.19 builds against tower-sessions 0.15, so both stay on that
 #   line until axum-login moves; bump them together.
 # - oauth2/openidconnect go in without their default `reqwest` feature (it's
 #   reqwest 0.12): muxa-auth hands them a small client over reqwest 0.13, the
 #   line the rest of the workspace (sentry, otel) is on.
-axum-login     = "0.18"
-tower-sessions = { version = "0.14", default-features = false, features = ["axum-core"] }
+axum-login     = "0.19"
+tower-sessions = { version = "0.15", default-features = false, features = ["axum-core"] }
 oauth2         = { version = "5", default-features = false }
 openidconnect  = { version = "4", default-features = false }
 reqwest        = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-password-auth  = "1"
+password-auth  = "2"
 bcrypt         = "0.19"
 subtle         = "2"
 time           = "0.3"
@@ -190,6 +190,6 @@ async-trait    = "0.1"
 url            = "2"
 
 # Sentry (error tracking + performance monitoring). rustls TLS for portability.
-sentry         = { version = "0.48", default-features = false, features = ["backtrace", "contexts", "panic", "release-health", "debug-images", "reqwest", "rustls"] }
-sentry-tower   = { version = "0.48", features = ["http"] }
-sentry-tracing = { version = "0.48", default-features = false }
+sentry         = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "release-health", "debug-images", "reqwest", "rustls"] }
+sentry-tower   = { version = "0.49", features = ["http"] }
+sentry-tracing = { version = "0.49", default-features = false }

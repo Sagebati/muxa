@@ -26,7 +26,7 @@ The plugin does three things:
 
 1. initialises the Sentry SDK (panics, errors, transactions). Its output, `SentryHandle`, keeps the client alive for the life of the app, and pending events are flushed when it is dropped.
 2. adds the `sentry-tower` layers to the router: a Sentry scope per request, HTTP context on events, and optionally a transaction per request, named after the matched route template (`GET /jobs/{id}`, not `GET /jobs/42`) so Sentry groups requests per endpoint.
-3. with the `tracing-bridge` feature, attaches `sentry-tracing` to the shared subscriber, so `tracing` events and spans reach Sentry.
+3. with the `tracing-bridge` feature, attaches `TracingBridge` (sentry-tracing's span, error, breadcrumb and log layers) to the shared subscriber. `INFO`-and-above spans become transactions and spans. `ERROR` events become Sentry issues. `WARN`/`INFO` events become breadcrumbs on the next error, and all three levels also go out as structured logs when `logs` is on. `DEBUG`/`TRACE` are not captured.
 
 Anything that already emits `tracing` spans shows up in Sentry through that bridge with no extra wiring. The query spans from [`diesel-sentry`](../diesel-sentry) are one example.
 

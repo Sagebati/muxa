@@ -83,6 +83,7 @@ async fn start<B, R>(
     State(flow): State<Arc<Flow<R>>>,
     Path(provider_id): Path<String>,
     Query(query): Query<StartQuery>,
+    session: Session,
     auth: AuthSession<B>,
 ) -> Response
 where
@@ -96,7 +97,7 @@ where
     let Some(provider) = flow.providers.get(&provider_id) else {
         return flow.refuse(&Refusal::new(Refusal::UNAVAILABLE), back());
     };
-    if link && auth.user.is_none() {
+    if link && auth.user().await.is_none() {
         return flow.refuse(
             &Refusal::new(Refusal::SIGNED_OUT),
             Some(Return {
@@ -123,7 +124,7 @@ where
         link,
         created_at: now_secs(),
     };
-    if let Err(err) = remember(&auth.session, pending).await {
+    if let Err(err) = remember(&session, pending).await {
         tracing::error!(error = %err, "could not store the sign-in attempt");
         return flow.refuse(&Refusal::new(Refusal::FAILED), back());
     }
@@ -141,14 +142,15 @@ async fn callback<B, R>(
     State(flow): State<Arc<Flow<R>>>,
     Path(provider_id): Path<String>,
     Query(query): Query<CallbackQuery>,
-    mut auth: AuthSession<B>,
+    session: Session,
+    auth: AuthSession<B>,
 ) -> Response
 where
     B: AuthnBackend + Send + Sync + 'static,
     R: IdentityResolver<B::User>,
 {
     let pending = match &query.state {
-        Some(state) => take(&auth.session, state).await,
+        Some(state) => take(&session, state).await,
         None => Ok(None),
     };
     let pending = match pending {
@@ -186,7 +188,8 @@ where
             return flow.refuse(&Refusal::new(Refusal::PROVIDER_FAILED), back());
         }
     };
-    if pending.link && auth.user.is_none() {
+    let current_user = auth.user().await;
+    if pending.link && current_user.is_none() {
         return flow.refuse(
             &Refusal::new(Refusal::SIGNED_OUT),
             Some(Return {
@@ -197,7 +200,7 @@ where
     }
 
     let ctx = ResolveContext {
-        current_user: auth.user.as_ref(),
+        current_user: current_user.as_ref(),
         link: pending.link,
     };
     let resolved = match flow.resolver.resolve(identity, ctx).await {
@@ -212,7 +215,7 @@ where
     Redirect::to(&with_query(&pending.next, &resolved.query)).into_response()
 }
 
-async fn sign_out<B>(mut auth: AuthSession<B>) -> StatusCode
+async fn sign_out<B>(auth: AuthSession<B>) -> StatusCode
 where
     B: AuthnBackend + Send + Sync + 'static,
 {

@@ -28,7 +28,8 @@ where
         let auth = AuthSession::<B>::from_request_parts(parts, state)
             .await
             .map_err(axum::response::IntoResponse::into_response)?;
-        auth.user
+        auth.user()
+            .await
             .map(Self)
             .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())
     }
@@ -45,7 +46,7 @@ where
         let auth = AuthSession::<B>::from_request_parts(parts, state)
             .await
             .map_err(axum::response::IntoResponse::into_response)?;
-        Ok(Self(auth.user))
+        Ok(Self(auth.user().await))
     }
 }
 
