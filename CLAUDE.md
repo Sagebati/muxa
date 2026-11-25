@@ -30,6 +30,8 @@ Some crates have feature-gated tests/impls — when testing a specific crate, pa
 
 ## Architecture
 
+`ARCHITECTURE.md` is the long-form overview (diagrams, lifecycle, per-plugin contributions, ordering rules); this section is the short version.
+
 ### Plugin chain → HList state
 
 An app is built by chaining plugins, each `await`ed:
